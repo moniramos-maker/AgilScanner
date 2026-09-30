@@ -24,6 +24,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContracts.GetContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -363,9 +364,55 @@ private fun FileLibraryScreen(
     var eraseFile by remember { mutableStateOf<File?>(null) }
     var erasePage by remember { mutableStateOf(1) }
     var eraseBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var importName by remember { mutableStateOf("") }
 
     val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
         ?: context.filesDir
+
+    val importPdfLauncher = rememberLauncherForActivityResult(
+        contract = GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                if (!outputDir.exists()) outputDir.mkdirs()
+                val base = importName.trim().ifBlank { "IMPORTADO_${System.currentTimeMillis()}" }
+                val out = File(outputDir, "${safeFilePart(base)}.pdf")
+                context.contentResolver.openInputStream(uri).use { input ->
+                    FileOutputStream(out).use { output ->
+                        requireNotNull(input) { "Não foi possível abrir o arquivo selecionado." }
+                        input.copyTo(output)
+                    }
+                }
+                importName = ""
+                refreshKey++
+                Toast.makeText(context, "PDF importado com sucesso.", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Erro ao importar PDF: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val importImageLauncher = rememberLauncherForActivityResult(
+        contract = GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                if (!outputDir.exists()) outputDir.mkdirs()
+                val bitmap = context.contentResolver.openInputStream(uri).use { input ->
+                    android.graphics.BitmapFactory.decodeStream(input)
+                } ?: error("Não foi possível abrir a imagem.")
+
+                val base = importName.trim().ifBlank { "FOTO_${System.currentTimeMillis()}" }
+                val out = File(outputDir, "${safeFilePart(base)}.pdf")
+                createPdfFromBitmap(bitmap, out)
+                importName = ""
+                refreshKey++
+                Toast.makeText(context, "Foto importada como PDF.", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Erro ao importar foto: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     if (eraseFile != null && eraseBitmap != null) {
         ManualEraserEditor(
@@ -430,6 +477,63 @@ private fun FileLibraryScreen(
 
             OutlinedButton(onClick = onBack) {
                 Text("Voltar")
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = AgilBlueSoft)
+        ) {
+            Column(
+                modifier = Modifier.padding(15.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "IMPORTAR",
+                    color = AgilDark,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Importe um PDF pronto ou uma foto da galeria. O arquivo ficará salvo nesta biblioteca.",
+                    color = AgilMuted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                OutlinedTextField(
+                    value = importName,
+                    onValueChange = { importName = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Nome do arquivo (opcional)") },
+                    singleLine = true
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { importImageLauncher.launch("image/*") },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AgilBlue,
+                            contentColor = AgilDark
+                        )
+                    ) {
+                        Text("IMPORTAR FOTO")
+                    }
+
+                    Button(
+                        onClick = { importPdfLauncher.launch("application/pdf") },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AgilDark,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("IMPORTAR PDF")
+                    }
+                }
             }
         }
 
@@ -834,6 +938,38 @@ private fun replacePdfPageWithBitmap(
 
     if (!temp.renameTo(file)) {
         error("Não foi possível finalizar o PDF editado.")
+    }
+}
+
+private fun createPdfFromBitmap(
+    bitmap: Bitmap,
+    output: File
+) {
+    PDDocument().use { document ->
+        val page = com.tom_roush.pdfbox.pdmodel.PDPage(
+            com.tom_roush.pdfbox.pdmodel.common.PDRectangle.A4
+        )
+        document.addPage(page)
+
+        val image = LosslessFactory.createFromImage(document, bitmap)
+        val pageWidth = page.mediaBox.width
+        val pageHeight = page.mediaBox.height
+
+        val scale = minOf(
+            pageWidth / bitmap.width.toFloat(),
+            pageHeight / bitmap.height.toFloat()
+        )
+
+        val drawWidth = bitmap.width * scale
+        val drawHeight = bitmap.height * scale
+        val x = (pageWidth - drawWidth) / 2f
+        val y = (pageHeight - drawHeight) / 2f
+
+        PDPageContentStream(document, page).use { content ->
+            content.drawImage(image, x, y, drawWidth, drawHeight)
+        }
+
+        document.save(output)
     }
 }
 
