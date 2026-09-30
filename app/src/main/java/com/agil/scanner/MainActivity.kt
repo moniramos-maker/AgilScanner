@@ -2,6 +2,7 @@ package com.agil.scanner
 
 import android.app.Activity
 import android.content.ClipData
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -25,7 +26,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -49,9 +52,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.multipdf.PDFMergerUtility
 import java.io.File
 import java.io.FileOutputStream
 
@@ -65,13 +75,29 @@ private val AgilMuted = Color(0xFF687384)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PDFBoxResourceLoader.init(applicationContext)
         setContent { AgilScannerApp() }
     }
 }
 
-private enum class MachineType(val label: String, val suffix: String, val subtitle: String) {
-    NOVA("MÁQUINA NOVA", "NOVA", "Equipamento que será instalado"),
-    ANTIGA("MÁQUINA ANTIGA", "ANTIGA", "Equipamento que será desinstalado")
+private enum class MachineType(
+    val label: String,
+    val suffix: String,
+    val subtitle: String,
+    val finalStatus: String
+) {
+    NOVA(
+        "IMPRESSORA NOVA",
+        "NOVA",
+        "Equipamento que será instalado",
+        "INSTALADA"
+    ),
+    ANTIGA(
+        "IMPRESSORA ANTIGA",
+        "ANTIGA",
+        "Equipamento que será desinstalado",
+        "RETIRADA"
+    )
 }
 
 private enum class DocumentType(val label: String, val suffix: String) {
@@ -113,9 +139,7 @@ private fun AgilScannerApp() {
             color = AgilBackground
         ) {
             if (machineType == null) {
-                MachineSelectionScreen(
-                    onSelect = { machineType = it }
-                )
+                MachineSelectionScreen(onSelect = { machineType = it })
             } else {
                 ScannerScreen(
                     machineType = machineType!!,
@@ -139,6 +163,7 @@ private fun BrandHeader(subtitle: String? = null) {
                 .fillMaxWidth(0.46f)
                 .height(78.dp)
         )
+
         if (subtitle != null) {
             Spacer(Modifier.height(8.dp))
             Text(
@@ -152,20 +177,18 @@ private fun BrandHeader(subtitle: String? = null) {
 }
 
 @Composable
-private fun MachineSelectionScreen(
-    onSelect: (MachineType) -> Unit
-) {
+private fun MachineSelectionScreen(onSelect: (MachineType) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 22.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.Center
     ) {
-        BrandHeader("Digitalização de documentos em PDF")
+        BrandHeader("Digitalização padronizada de OS em PDF")
         Spacer(Modifier.height(34.dp))
 
         Text(
-            text = "Selecione o equipamento",
+            text = "Selecione a impressora",
             color = AgilDark,
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
@@ -212,6 +235,7 @@ private fun MachineCard(
                         RoundedCornerShape(10.dp)
                     )
             )
+
             Column(modifier = Modifier.padding(start = 14.dp)) {
                 Text(
                     text = type.label,
@@ -239,14 +263,21 @@ private fun ScannerScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var chamado by remember { mutableStateOf("") }
+    var serial by remember { mutableStateOf("") }
+    var serialInfo by remember { mutableStateOf("A série será tentada automaticamente ao digitalizar.") }
     var selectedType by remember { mutableStateOf<DocumentType?>(null) }
+
     val savedFiles = remember { mutableStateMapOf<DocumentType, ScannedDocument>() }
+    val requiredDocuments = documentsFor(machineType)
 
     val options = remember {
         GmsDocumentScannerOptions.Builder()
             .setGalleryImportAllowed(false)
             .setPageLimit(20)
-            .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
+            .setResultFormats(
+                GmsDocumentScannerOptions.RESULT_FORMAT_PDF,
+                GmsDocumentScannerOptions.RESULT_FORMAT_JPEG
+            )
             .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
             .build()
     }
@@ -263,9 +294,10 @@ private fun ScannerScreen(
 
             if (pdf?.uri != null && type != null) {
                 try {
-                    val safeCall = chamado.trim().replace(Regex("[^A-Za-z0-9_-]"), "_")
+                    val safeCall = safeFilePart(chamado)
                     val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
                         ?: context.filesDir
+
                     if (!outputDir.exists()) outputDir.mkdirs()
 
                     val output = File(
@@ -285,9 +317,26 @@ private fun ScannerScreen(
                         pageCount = pdf.pageCount
                     )
 
+                    val pageUris = scanResult.pages?.map { it.imageUri }.orEmpty()
+                    if (serial.isBlank() && pageUris.isNotEmpty()) {
+                        serialInfo = "Tentando identificar a série..."
+                        detectSerialFromPages(
+                            context = context,
+                            uris = pageUris,
+                            onResult = { detected ->
+                                if (!detected.isNullOrBlank() && serial.isBlank()) {
+                                    serial = detected
+                                    serialInfo = "Série identificada automaticamente. Confirme antes de enviar."
+                                } else if (serial.isBlank()) {
+                                    serialInfo = "Não consegui identificar a série. Digite manualmente."
+                                }
+                            }
+                        )
+                    }
+
                     Toast.makeText(
                         context,
-                        "PDF salvo com ${pdf.pageCount} página(s).",
+                        "Documento salvo com ${pdf.pageCount} página(s).",
                         Toast.LENGTH_SHORT
                     ).show()
                 } catch (e: Exception) {
@@ -308,6 +357,7 @@ private fun ScannerScreen(
         }
 
         selectedType = type
+
         scanner.getStartScanIntent(activity)
             .addOnSuccessListener { intentSender ->
                 scannerLauncher.launch(
@@ -323,52 +373,56 @@ private fun ScannerScreen(
             }
     }
 
-    fun shareOnWhatsApp(files: List<File>) {
-        if (files.isEmpty()) {
-            Toast.makeText(context, "Digitalize pelo menos um documento.", Toast.LENGTH_SHORT).show()
+    fun buildAndShareFinalPdf() {
+        if (serial.isBlank()) {
+            Toast.makeText(context, "Confirme ou informe a série.", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val uris = ArrayList<Uri>()
-        files.forEach { file ->
-            uris += FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                file
-            )
-        }
-
-        fun buildIntent(packageName: String?): Intent {
-            return Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                type = "application/pdf"
-                putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                putExtra(
-                    Intent.EXTRA_TEXT,
-                    "Chamado ${chamado.trim()} - ${machineType.label.lowercase()} - documentação digitalizada"
-                )
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                clipData = ClipData.newRawUri("Documentos", uris.first())
-                uris.drop(1).forEach { clipData?.addItem(ClipData.Item(it)) }
-                if (packageName != null) setPackage(packageName)
-            }
+        if (requiredDocuments.any { !savedFiles.containsKey(it) }) {
+            Toast.makeText(context, "Digitalize todos os documentos obrigatórios.", Toast.LENGTH_SHORT).show()
+            return
         }
 
         try {
-            context.startActivity(buildIntent("com.whatsapp"))
-        } catch (_: Exception) {
-            try {
-                context.startActivity(buildIntent("com.whatsapp.w4b"))
-            } catch (_: Exception) {
-                context.startActivity(
-                    Intent.createChooser(buildIntent(null), "Enviar PDFs")
-                )
+            val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                ?: context.filesDir
+
+            val safeSerial = safeFilePart(serial.uppercase())
+            val finalPdf = File(
+                outputDir,
+                "${safeSerial}_${machineType.finalStatus}.pdf"
+            )
+
+            val merger = PDFMergerUtility()
+            requiredDocuments.forEach { document ->
+                merger.addSource(requireNotNull(savedFiles[document]).file)
             }
+            merger.destinationFileName = finalPdf.absolutePath
+            merger.mergeDocuments(MemoryUsageSetting.setupMainMemoryOnly())
+
+            shareSinglePdf(
+                context = context,
+                file = finalPdf,
+                message = "Chamado ${chamado.trim()} - Série ${serial.trim().uppercase()} - ${machineType.finalStatus.lowercase()}"
+            )
+        } catch (e: Exception) {
+            Toast.makeText(
+                context,
+                "Erro ao gerar PDF único: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
+
+    val count = requiredDocuments.count { savedFiles.containsKey(it) }
+    val total = requiredDocuments.size
+    val ready = count == total && serial.isNotBlank()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 18.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -399,6 +453,7 @@ private fun ScannerScreen(
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
+
                 OutlinedButton(onClick = onNewSession) {
                     Text("Trocar")
                 }
@@ -413,30 +468,32 @@ private fun ScannerScreen(
             singleLine = true
         )
 
+        OutlinedTextField(
+            value = serial,
+            onValueChange = {
+                serial = it.uppercase().replace(Regex("[^A-Z0-9]"), "")
+                serialInfo = "Série confirmada/editada manualmente."
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Série da impressora") },
+            supportingText = { Text(serialInfo) },
+            singleLine = true
+        )
+
         Text(
-            text = "Cada relatório pode ter várias fotos/páginas. Fotografe todas antes de concluir o documento.",
+            text = "Cada item pode conter várias fotos. O aplicativo juntará tudo em um único PDF somente na hora do envio.",
             color = AgilMuted,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 2.dp)
         )
 
-        val requiredDocuments = documentsFor(machineType)
-
         requiredDocuments.forEach { document ->
             DocumentCard(
                 label = document.labelFor(machineType),
                 scanned = savedFiles[document],
-                onScan = { startScan(document) },
-                onShare = {
-                    savedFiles[document]?.file?.let {
-                        shareOnWhatsApp(listOf(it))
-                    }
-                }
+                onScan = { startScan(document) }
             )
         }
-
-        val count = requiredDocuments.count { savedFiles.containsKey(it) }
-        val total = requiredDocuments.size
 
         Text(
             text = "Documentação: $count de $total concluída",
@@ -444,13 +501,17 @@ private fun ScannerScreen(
             fontWeight = FontWeight.SemiBold
         )
 
+        if (serial.isNotBlank()) {
+            Text(
+                text = "Arquivo final: ${safeFilePart(serial)}_${machineType.finalStatus}.pdf",
+                color = AgilMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
         Button(
-            onClick = {
-                shareOnWhatsApp(
-                    requiredDocuments.mapNotNull { savedFiles[it]?.file }
-                )
-            },
-            enabled = savedFiles.isNotEmpty(),
+            onClick = { buildAndShareFinalPdf() },
+            enabled = ready,
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = AgilDark,
@@ -459,11 +520,20 @@ private fun ScannerScreen(
             ),
             shape = RoundedCornerShape(14.dp)
         ) {
+            Text("GERAR PDF ÚNICO E ENVIAR PELO WHATSAPP")
+        }
+
+        if (!ready) {
             Text(
-                if (count == total) "ENVIAR OS $total PDFs PELO WHATSAPP"
-                else "ENVIAR PDFs DIGITALIZADOS"
+                text = "Para liberar o envio, confirme a série e conclua todos os documentos.",
+                color = AgilMuted,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
         }
+
+        Spacer(Modifier.height(20.dp))
     }
 }
 
@@ -471,8 +541,7 @@ private fun ScannerScreen(
 private fun DocumentCard(
     label: String,
     scanned: ScannedDocument?,
-    onScan: () -> Unit,
-    onShare: () -> Unit
+    onScan: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -490,37 +559,198 @@ private fun DocumentCard(
                 fontWeight = FontWeight.Bold
             )
 
-            if (scanned != null) {
-                Text(
-                    text = "${scanned.pageCount} página(s) no PDF",
-                    color = AgilMuted,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            } else {
-                Text(
-                    text = "Pode conter uma ou várias fotos",
-                    color = AgilMuted,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
+            Text(
+                text = if (scanned != null) {
+                    "${scanned.pageCount} página(s) digitalizada(s)"
+                } else {
+                    "Pode conter uma ou várias fotos"
+                },
+                color = AgilMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onScan,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = AgilBlue,
-                        contentColor = AgilDark
-                    )
-                ) {
-                    Text(if (scanned != null) "Refazer" else "Digitalizar")
-                }
-
-                if (scanned != null) {
-                    OutlinedButton(onClick = onShare) {
-                        Text("WhatsApp")
-                    }
-                }
+            Button(
+                onClick = onScan,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AgilBlue,
+                    contentColor = AgilDark
+                )
+            ) {
+                Text(if (scanned != null) "Refazer" else "Digitalizar")
             }
         }
     }
+}
+
+private fun safeFilePart(value: String): String =
+    value.trim()
+        .uppercase()
+        .replace(Regex("[^A-Z0-9_-]"), "_")
+        .ifBlank { "SEM_IDENTIFICACAO" }
+
+private fun shareSinglePdf(
+    context: Context,
+    file: File,
+    message: String
+) {
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file
+    )
+
+    fun buildIntent(packageName: String?): Intent =
+        Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_TEXT, message)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = ClipData.newRawUri(file.name, uri)
+            if (packageName != null) setPackage(packageName)
+        }
+
+    try {
+        context.startActivity(buildIntent("com.whatsapp"))
+    } catch (_: Exception) {
+        try {
+            context.startActivity(buildIntent("com.whatsapp.w4b"))
+        } catch (_: Exception) {
+            context.startActivity(
+                Intent.createChooser(buildIntent(null), "Enviar PDF")
+            )
+        }
+    }
+}
+
+private fun detectSerialFromPages(
+    context: Context,
+    uris: List<Uri>,
+    onResult: (String?) -> Unit
+) {
+    detectBarcodeSerial(
+        context = context,
+        uris = uris,
+        index = 0
+    ) { barcodeResult ->
+        if (!barcodeResult.isNullOrBlank()) {
+            onResult(barcodeResult)
+        } else {
+            detectTextSerial(
+                context = context,
+                uris = uris,
+                index = 0,
+                onResult = onResult
+            )
+        }
+    }
+}
+
+private fun detectBarcodeSerial(
+    context: Context,
+    uris: List<Uri>,
+    index: Int,
+    onResult: (String?) -> Unit
+) {
+    if (index >= uris.size) {
+        onResult(null)
+        return
+    }
+
+    val scanner = BarcodeScanning.getClient()
+
+    try {
+        val image = InputImage.fromFilePath(context, uris[index])
+        scanner.process(image)
+            .addOnSuccessListener { barcodes ->
+                val candidate = barcodes
+                    .asSequence()
+                    .mapNotNull { it.rawValue }
+                    .mapNotNull { normalizeSerialCandidate(it) }
+                    .firstOrNull()
+
+                scanner.close()
+
+                if (candidate != null) {
+                    onResult(candidate)
+                } else {
+                    detectBarcodeSerial(context, uris, index + 1, onResult)
+                }
+            }
+            .addOnFailureListener {
+                scanner.close()
+                detectBarcodeSerial(context, uris, index + 1, onResult)
+            }
+    } catch (_: Exception) {
+        scanner.close()
+        detectBarcodeSerial(context, uris, index + 1, onResult)
+    }
+}
+
+private fun detectTextSerial(
+    context: Context,
+    uris: List<Uri>,
+    index: Int,
+    onResult: (String?) -> Unit
+) {
+    if (index >= uris.size) {
+        onResult(null)
+        return
+    }
+
+    val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+    try {
+        val image = InputImage.fromFilePath(context, uris[index])
+        recognizer.process(image)
+            .addOnSuccessListener { result ->
+                val candidate = extractSerialFromText(result.text)
+                recognizer.close()
+
+                if (candidate != null) {
+                    onResult(candidate)
+                } else {
+                    detectTextSerial(context, uris, index + 1, onResult)
+                }
+            }
+            .addOnFailureListener {
+                recognizer.close()
+                detectTextSerial(context, uris, index + 1, onResult)
+            }
+    } catch (_: Exception) {
+        recognizer.close()
+        detectTextSerial(context, uris, index + 1, onResult)
+    }
+}
+
+private fun extractSerialFromText(text: String): String? {
+    val normalizedText = text.uppercase()
+    val labeledPattern = Regex(
+        """(?:SERIAL(?:\s+NUMBER)?|SÉRIE|SERIE|S/N|SN)\s*[:#-]?\s*([A-Z0-9]{8,24})"""
+    )
+
+    labeledPattern.find(normalizedText)?.groupValues?.getOrNull(1)?.let {
+        return normalizeSerialCandidate(it)
+    }
+
+    val candidates = Regex("""\b[A-Z0-9]{10,18}\b""")
+        .findAll(normalizedText)
+        .map { it.value }
+        .mapNotNull { normalizeSerialCandidate(it) }
+        .filter { value ->
+            value.any { it.isLetter() } && value.any { it.isDigit() }
+        }
+        .distinct()
+        .toList()
+
+    return if (candidates.size == 1) candidates.first() else null
+}
+
+private fun normalizeSerialCandidate(raw: String): String? {
+    val value = raw.uppercase().replace(Regex("[^A-Z0-9]"), "")
+
+    if (value.length !in 8..24) return null
+    if (value.startsWith("HTTP") || value.startsWith("WWW")) return null
+    if (!value.any { it.isDigit() }) return null
+
+    return value
 }
