@@ -80,6 +80,24 @@ private enum class DocumentType(val label: String, val suffix: String) {
     ESTATISTICA("Página de Estatística", "ESTATISTICA")
 }
 
+private fun DocumentType.labelFor(machineType: MachineType): String =
+    if (machineType == MachineType.NOVA && this == DocumentType.CONFIGURACAO) {
+        "Página de Configuração do Menu"
+    } else {
+        label
+    }
+
+private fun documentsFor(machineType: MachineType): List<DocumentType> =
+    if (machineType == MachineType.NOVA) {
+        listOf(DocumentType.ATIVO, DocumentType.CONFIGURACAO)
+    } else {
+        listOf(
+            DocumentType.CONFIGURACAO,
+            DocumentType.ATIVO,
+            DocumentType.ESTATISTICA
+        )
+    }
+
 private data class ScannedDocument(
     val file: File,
     val pageCount: Int
@@ -402,42 +420,26 @@ private fun ScannerScreen(
             modifier = Modifier.padding(horizontal = 2.dp)
         )
 
-        DocumentCard(
-            type = DocumentType.CONFIGURACAO,
-            scanned = savedFiles[DocumentType.CONFIGURACAO],
-            onScan = { startScan(DocumentType.CONFIGURACAO) },
-            onShare = {
-                savedFiles[DocumentType.CONFIGURACAO]?.file?.let {
-                    shareOnWhatsApp(listOf(it))
-                }
-            }
-        )
+        val requiredDocuments = documentsFor(machineType)
 
-        DocumentCard(
-            type = DocumentType.ATIVO,
-            scanned = savedFiles[DocumentType.ATIVO],
-            onScan = { startScan(DocumentType.ATIVO) },
-            onShare = {
-                savedFiles[DocumentType.ATIVO]?.file?.let {
-                    shareOnWhatsApp(listOf(it))
+        requiredDocuments.forEach { document ->
+            DocumentCard(
+                label = document.labelFor(machineType),
+                scanned = savedFiles[document],
+                onScan = { startScan(document) },
+                onShare = {
+                    savedFiles[document]?.file?.let {
+                        shareOnWhatsApp(listOf(it))
+                    }
                 }
-            }
-        )
+            )
+        }
 
-        DocumentCard(
-            type = DocumentType.ESTATISTICA,
-            scanned = savedFiles[DocumentType.ESTATISTICA],
-            onScan = { startScan(DocumentType.ESTATISTICA) },
-            onShare = {
-                savedFiles[DocumentType.ESTATISTICA]?.file?.let {
-                    shareOnWhatsApp(listOf(it))
-                }
-            }
-        )
+        val count = requiredDocuments.count { savedFiles.containsKey(it) }
+        val total = requiredDocuments.size
 
-        val count = savedFiles.size
         Text(
-            text = "Documentação: $count de 3 concluída",
+            text = "Documentação: $count de $total concluída",
             color = AgilDark,
             fontWeight = FontWeight.SemiBold
         )
@@ -445,7 +447,7 @@ private fun ScannerScreen(
         Button(
             onClick = {
                 shareOnWhatsApp(
-                    DocumentType.entries.mapNotNull { savedFiles[it]?.file }
+                    requiredDocuments.mapNotNull { savedFiles[it]?.file }
                 )
             },
             enabled = savedFiles.isNotEmpty(),
@@ -458,7 +460,7 @@ private fun ScannerScreen(
             shape = RoundedCornerShape(14.dp)
         ) {
             Text(
-                if (count == 3) "ENVIAR OS 3 PDFs PELO WHATSAPP"
+                if (count == total) "ENVIAR OS $total PDFs PELO WHATSAPP"
                 else "ENVIAR PDFs DIGITALIZADOS"
             )
         }
@@ -467,7 +469,7 @@ private fun ScannerScreen(
 
 @Composable
 private fun DocumentCard(
-    type: DocumentType,
+    label: String,
     scanned: ScannedDocument?,
     onScan: () -> Unit,
     onShare: () -> Unit
@@ -483,7 +485,7 @@ private fun DocumentCard(
             verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
             Text(
-                text = if (scanned != null) "✓ ${type.label}" else type.label,
+                text = if (scanned != null) "✓ $label" else label,
                 color = AgilDark,
                 fontWeight = FontWeight.Bold
             )
