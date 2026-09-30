@@ -62,6 +62,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.multipdf.PDFMergerUtility
+import com.tom_roush.pdfbox.pdmodel.PDDocument
 import java.io.File
 import java.io.FileOutputStream
 
@@ -131,7 +132,8 @@ private data class ScannedDocument(
 
 private enum class HomeMode {
     EQUIPMENT,
-    RAT
+    RAT,
+    FILES
 }
 
 @Composable
@@ -147,6 +149,15 @@ private fun AgilScannerApp() {
             when {
                 homeMode == HomeMode.RAT -> {
                     RatScreen(
+                        onBack = {
+                            homeMode = null
+                            machineType = null
+                        }
+                    )
+                }
+
+                homeMode == HomeMode.FILES -> {
+                    FileLibraryScreen(
                         onBack = {
                             homeMode = null
                             machineType = null
@@ -172,6 +183,10 @@ private fun AgilScannerApp() {
                         },
                         onRat = {
                             homeMode = HomeMode.RAT
+                            machineType = null
+                        },
+                        onFiles = {
+                            homeMode = HomeMode.FILES
                             machineType = null
                         }
                     )
@@ -210,11 +225,13 @@ private fun BrandHeader(subtitle: String? = null) {
 @Composable
 private fun MachineSelectionScreen(
     onSelect: (MachineType) -> Unit,
-    onRat: () -> Unit
+    onRat: () -> Unit,
+    onFiles: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 22.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.Center
     ) {
@@ -276,6 +293,285 @@ private fun MachineSelectionScreen(
                 }
             }
         }
+
+        Spacer(Modifier.height(14.dp))
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onFiles() },
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = AgilBlueSoft),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(22.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .background(AgilDark, RoundedCornerShape(10.dp))
+                )
+
+                Column(modifier = Modifier.padding(start = 14.dp)) {
+                    Text(
+                        text = "ARQUIVOS SALVOS",
+                        color = AgilDark,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "Reenviar, apagar arquivos ou remover páginas",
+                        color = AgilMuted,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 3.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+    }
+}
+
+@Composable
+private fun FileLibraryScreen(
+    onBack: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var refreshKey by remember { mutableStateOf(0) }
+    var selectedFile by remember { mutableStateOf<File?>(null) }
+    var pageToDelete by remember { mutableStateOf("") }
+
+    val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+        ?: context.filesDir
+
+    val files = remember(refreshKey) {
+        if (!outputDir.exists()) {
+            emptyList()
+        } else {
+            outputDir.listFiles()
+                ?.filter { it.isFile && it.extension.equals("pdf", ignoreCase = true) }
+                ?.sortedByDescending { it.lastModified() }
+                .orEmpty()
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 18.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        BrandHeader("Arquivos salvos")
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "DOCUMENTOS",
+                    color = AgilDark,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Text(
+                    text = "${files.size} arquivo(s) salvo(s) no aparelho",
+                    color = AgilMuted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            OutlinedButton(onClick = onBack) {
+                Text("Voltar")
+            }
+        }
+
+        if (files.isEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Text(
+                    text = "Nenhum PDF salvo ainda.",
+                    modifier = Modifier.padding(18.dp),
+                    color = AgilMuted
+                )
+            }
+        }
+
+        files.forEach { file ->
+            val pages = getPdfPageCount(file)
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(15.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = file.name,
+                        color = AgilDark,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "$pages página(s)",
+                        color = AgilMuted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                shareSinglePdf(
+                                    context = context,
+                                    file = file,
+                                    message = file.nameWithoutExtension
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AgilDark,
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Text("Enviar")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                selectedFile = if (selectedFile == file) null else file
+                                pageToDelete = ""
+                            }
+                        ) {
+                            Text("Editar páginas")
+                        }
+                    }
+
+                    if (selectedFile == file) {
+                        Text(
+                            text = "Se uma foto ficou tremida ou uma página precisa sair, informe o número da página.",
+                            color = AgilMuted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+
+                        OutlinedTextField(
+                            value = pageToDelete,
+                            onValueChange = { pageToDelete = it.filter(Char::isDigit) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Página para apagar (1 a $pages)") },
+                            singleLine = true
+                        )
+
+                        Button(
+                            onClick = {
+                                val page = pageToDelete.toIntOrNull()
+                                if (page == null || page !in 1..pages) {
+                                    Toast.makeText(
+                                        context,
+                                        "Informe uma página válida.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                } else if (pages <= 1) {
+                                    Toast.makeText(
+                                        context,
+                                        "O PDF tem apenas uma página. Apague o arquivo inteiro se necessário.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } else {
+                                    try {
+                                        removePdfPage(file, page)
+                                        pageToDelete = ""
+                                        refreshKey++
+                                        Toast.makeText(
+                                            context,
+                                            "Página $page removida.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } catch (e: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            "Erro ao remover página: ${e.message}",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            },
+                            enabled = pages > 1,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AgilBlue,
+                                contentColor = AgilDark
+                            )
+                        ) {
+                            Text("APAGAR ESTA PÁGINA")
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            if (file.delete()) {
+                                if (selectedFile == file) selectedFile = null
+                                refreshKey++
+                                Toast.makeText(
+                                    context,
+                                    "Arquivo apagado.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "Não foi possível apagar o arquivo.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    ) {
+                        Text("Apagar arquivo")
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+private fun getPdfPageCount(file: File): Int =
+    try {
+        PDDocument.load(file).use { it.numberOfPages }
+    } catch (_: Exception) {
+        0
+    }
+
+private fun removePdfPage(file: File, pageNumber: Int) {
+    val temp = File(file.parentFile, "${file.nameWithoutExtension}_editando.pdf")
+
+    PDDocument.load(file).use { document ->
+        require(pageNumber in 1..document.numberOfPages) { "Página inválida." }
+        require(document.numberOfPages > 1) { "O PDF precisa manter pelo menos uma página." }
+
+        document.removePage(pageNumber - 1)
+        document.save(temp)
+    }
+
+    if (!file.delete()) {
+        temp.delete()
+        error("Não foi possível substituir o arquivo original.")
+    }
+
+    if (!temp.renameTo(file)) {
+        error("Não foi possível finalizar a edição do PDF.")
     }
 }
 
