@@ -388,10 +388,11 @@ private fun ScannerScreen(
             val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
                 ?: context.filesDir
 
+            val safeCall = safeFilePart(chamado)
             val safeSerial = safeFilePart(serial.uppercase())
             val finalPdf = File(
                 outputDir,
-                "${safeSerial}_${machineType.finalStatus}.pdf"
+                "${safeCall}_${safeSerial}_${machineType.finalStatus}.pdf"
             )
 
             val merger = PDFMergerUtility()
@@ -503,7 +504,7 @@ private fun ScannerScreen(
 
         if (serial.isNotBlank()) {
             Text(
-                text = "Arquivo final: ${safeFilePart(serial)}_${machineType.finalStatus}.pdf",
+                text = "Arquivo final: ${safeFilePart(chamado)}_${safeFilePart(serial)}_${machineType.finalStatus}.pdf",
                 color = AgilMuted,
                 style = MaterialTheme.typography.bodySmall
             )
