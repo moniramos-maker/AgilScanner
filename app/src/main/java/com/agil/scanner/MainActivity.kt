@@ -129,22 +129,53 @@ private data class ScannedDocument(
     val pageCount: Int
 )
 
+private enum class HomeMode {
+    EQUIPMENT,
+    RAT
+}
+
 @Composable
 private fun AgilScannerApp() {
     var machineType by remember { mutableStateOf<MachineType?>(null) }
+    var homeMode by remember { mutableStateOf<HomeMode?>(null) }
 
     MaterialTheme {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = AgilBackground
         ) {
-            if (machineType == null) {
-                MachineSelectionScreen(onSelect = { machineType = it })
-            } else {
-                ScannerScreen(
-                    machineType = machineType!!,
-                    onNewSession = { machineType = null }
-                )
+            when {
+                homeMode == HomeMode.RAT -> {
+                    RatScreen(
+                        onBack = {
+                            homeMode = null
+                            machineType = null
+                        }
+                    )
+                }
+
+                machineType != null -> {
+                    ScannerScreen(
+                        machineType = machineType!!,
+                        onNewSession = {
+                            machineType = null
+                            homeMode = null
+                        }
+                    )
+                }
+
+                else -> {
+                    MachineSelectionScreen(
+                        onSelect = {
+                            homeMode = HomeMode.EQUIPMENT
+                            machineType = it
+                        },
+                        onRat = {
+                            homeMode = HomeMode.RAT
+                            machineType = null
+                        }
+                    )
+                }
             }
         }
     }
@@ -177,7 +208,10 @@ private fun BrandHeader(subtitle: String? = null) {
 }
 
 @Composable
-private fun MachineSelectionScreen(onSelect: (MachineType) -> Unit) {
+private fun MachineSelectionScreen(
+    onSelect: (MachineType) -> Unit,
+    onRat: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -203,6 +237,258 @@ private fun MachineSelectionScreen(onSelect: (MachineType) -> Unit) {
         MachineCard(MachineType.NOVA, onSelect)
         Spacer(Modifier.height(14.dp))
         MachineCard(MachineType.ANTIGA, onSelect)
+
+        Spacer(Modifier.height(22.dp))
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onRat() },
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(22.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .background(AgilBlue, RoundedCornerShape(10.dp))
+                )
+
+                Column(modifier = Modifier.padding(start = 14.dp)) {
+                    Text(
+                        text = "RAT DE ATENDIMENTO",
+                        color = AgilDark,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "Digitalizar e enviar RAT pelo número do chamado",
+                        color = AgilMuted,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 3.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RatScreen(
+    onBack: () -> Unit
+) {
+    val activity = androidx.compose.ui.platform.LocalContext.current as Activity
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    var chamado by remember { mutableStateOf("") }
+    var ratFile by remember { mutableStateOf<File?>(null) }
+    var pageCount by remember { mutableStateOf(0) }
+
+    val options = remember {
+        GmsDocumentScannerOptions.Builder()
+            .setGalleryImportAllowed(false)
+            .setPageLimit(20)
+            .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
+            .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+            .build()
+    }
+
+    val scanner = remember { GmsDocumentScanning.getClient(options) }
+
+    val scannerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val scanResult = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+            val pdf = scanResult?.pdf
+
+            if (pdf?.uri != null) {
+                try {
+                    val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                        ?: context.filesDir
+
+                    if (!outputDir.exists()) outputDir.mkdirs()
+
+                    val output = File(
+                        outputDir,
+                        "${safeFilePart(chamado)}_RAT.pdf"
+                    )
+
+                    context.contentResolver.openInputStream(pdf.uri).use { input ->
+                        FileOutputStream(output).use { out ->
+                            requireNotNull(input) { "Não foi possível abrir o PDF gerado." }
+                            input.copyTo(out)
+                        }
+                    }
+
+                    ratFile = output
+                    pageCount = pdf.pageCount
+
+                    Toast.makeText(
+                        context,
+                        "RAT salva com ${pdf.pageCount} página(s).",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } catch (e: Exception) {
+                    Toast.makeText(
+                        context,
+                        "Erro ao salvar RAT: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    fun startRatScan() {
+        if (chamado.isBlank()) {
+            Toast.makeText(
+                context,
+                "Informe o número do chamado.",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        scanner.getStartScanIntent(activity)
+            .addOnSuccessListener { intentSender ->
+                scannerLauncher.launch(
+                    IntentSenderRequest.Builder(intentSender).build()
+                )
+            }
+            .addOnFailureListener { error ->
+                Toast.makeText(
+                    context,
+                    "Não foi possível abrir o scanner: ${error.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 18.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        BrandHeader("RAT de Atendimento")
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = AgilBlueSoft)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "RAT DE ATENDIMENTO",
+                        fontWeight = FontWeight.Bold,
+                        color = AgilDark
+                    )
+                    Text(
+                        text = "Somente o número do chamado é obrigatório",
+                        color = AgilMuted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                OutlinedButton(onClick = onBack) {
+                    Text("Voltar")
+                }
+            }
+        }
+
+        OutlinedTextField(
+            value = chamado,
+            onValueChange = {
+                chamado = it
+                ratFile = null
+                pageCount = 0
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Número do chamado") },
+            singleLine = true
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = AgilSurface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = if (ratFile != null) "✓ RAT digitalizada" else "RAT de Atendimento",
+                    color = AgilDark,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    text = if (ratFile != null) {
+                        "$pageCount página(s) no PDF"
+                    } else {
+                        "Pode conter uma ou várias páginas"
+                    },
+                    color = AgilMuted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Button(
+                    onClick = { startRatScan() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AgilBlue,
+                        contentColor = AgilDark
+                    )
+                ) {
+                    Text(if (ratFile != null) "Refazer RAT" else "Digitalizar RAT")
+                }
+            }
+        }
+
+        if (ratFile != null) {
+            Text(
+                text = "Arquivo: ${safeFilePart(chamado)}_RAT.pdf",
+                color = AgilMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        Button(
+            onClick = {
+                ratFile?.let {
+                    shareSinglePdf(
+                        context = context,
+                        file = it,
+                        message = "Chamado ${chamado.trim()} - RAT de atendimento"
+                    )
+                }
+            },
+            enabled = chamado.isNotBlank() && ratFile != null,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = AgilDark,
+                contentColor = Color.White,
+                disabledContainerColor = Color(0xFFD7DBE1)
+            ),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text("ENVIAR RAT PELO WHATSAPP")
+        }
     }
 }
 
