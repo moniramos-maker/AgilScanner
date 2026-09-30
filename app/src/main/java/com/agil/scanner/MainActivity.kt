@@ -8,6 +8,17 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.widget.Toast
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Paint as AndroidPaint
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -63,6 +74,10 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.multipdf.PDFMergerUtility
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
+import com.tom_roush.pdfbox.rendering.ImageType
+import com.tom_roush.pdfbox.rendering.PDFRenderer
+import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
 import java.io.File
 import java.io.FileOutputStream
 
@@ -345,9 +360,35 @@ private fun FileLibraryScreen(
     var refreshKey by remember { mutableStateOf(0) }
     var selectedFile by remember { mutableStateOf<File?>(null) }
     var pageToDelete by remember { mutableStateOf("") }
+    var eraseFile by remember { mutableStateOf<File?>(null) }
+    var erasePage by remember { mutableStateOf(1) }
+    var eraseBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
         ?: context.filesDir
+
+    if (eraseFile != null && eraseBitmap != null) {
+        ManualEraserEditor(
+            bitmap = requireNotNull(eraseBitmap),
+            pageNumber = erasePage,
+            onCancel = {
+                eraseFile = null
+                eraseBitmap = null
+            },
+            onSave = { edited ->
+                try {
+                    replacePdfPageWithBitmap(requireNotNull(eraseFile), erasePage, edited)
+                    eraseFile = null
+                    eraseBitmap = null
+                    refreshKey++
+                    Toast.makeText(context, "Página corrigida e salva.", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Erro ao salvar edição: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        )
+        return
+    }
 
     val files = remember(refreshKey) {
         if (!outputDir.exists()) {
@@ -516,6 +557,33 @@ private fun FileLibraryScreen(
                         ) {
                             Text("APAGAR ESTA PÁGINA")
                         }
+
+                        OutlinedButton(
+                            onClick = {
+                                val page = pageToDelete.toIntOrNull()
+                                if (page == null || page !in 1..pages) {
+                                    Toast.makeText(
+                                        context,
+                                        "Informe a página que deseja editar.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                } else {
+                                    try {
+                                        eraseBitmap = renderPdfPage(file, page)
+                                        eraseFile = file
+                                        erasePage = page
+                                    } catch (e: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            "Erro ao abrir página: ${e.message}",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            }
+                        ) {
+                            Text("BORRACHA MANUAL")
+                        }
                     }
 
                     OutlinedButton(
@@ -544,6 +612,228 @@ private fun FileLibraryScreen(
         }
 
         Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun ManualEraserEditor(
+    bitmap: Bitmap,
+    pageNumber: Int,
+    onCancel: () -> Unit,
+    onSave: (Bitmap) -> Unit
+) {
+    val strokes = remember { mutableStateListOf<MutableList<Offset>>() }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    var brushSize by remember { mutableStateOf(34f) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AgilBackground)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(
+            text = "Borracha manual — página $pageNumber",
+            color = AgilDark,
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleLarge
+        )
+        Text(
+            text = "Passe o dedo sobre a área que deseja apagar. A região ficará branca.",
+            color = AgilMuted,
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .background(Color.White)
+                .onSizeChanged { canvasSize = it }
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { start ->
+                                strokes.add(mutableListOf(start))
+                            },
+                            onDrag = { change, _ ->
+                                strokes.lastOrNull()?.add(change.position)
+                                change.consume()
+                            }
+                        )
+                    }
+            ) {
+                drawImage(
+                    image = bitmap.asImageBitmap(),
+                    dstSize = IntSize(size.width.toInt(), size.height.toInt())
+                )
+
+                strokes.forEach { stroke ->
+                    if (stroke.size == 1) {
+                        drawCircle(
+                            color = Color.White,
+                            radius = brushSize / 2f,
+                            center = stroke.first()
+                        )
+                    } else {
+                        for (i in 1 until stroke.size) {
+                            drawLine(
+                                color = Color.White,
+                                start = stroke[i - 1],
+                                end = stroke[i],
+                                strokeWidth = brushSize
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = { brushSize = (brushSize - 8f).coerceAtLeast(14f) },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Borracha -")
+            }
+            OutlinedButton(
+                onClick = { brushSize = (brushSize + 8f).coerceAtMost(90f) },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Borracha +")
+            }
+            OutlinedButton(
+                onClick = { strokes.clear() },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Limpar")
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onCancel,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Cancelar")
+            }
+
+            Button(
+                onClick = {
+                    if (canvasSize.width <= 0 || canvasSize.height <= 0) return@Button
+
+                    val edited = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+                    val canvas = AndroidCanvas(edited)
+                    val paint = AndroidPaint().apply {
+                        color = android.graphics.Color.WHITE
+                        style = AndroidPaint.Style.STROKE
+                        strokeCap = AndroidPaint.Cap.ROUND
+                        strokeJoin = AndroidPaint.Join.ROUND
+                        isAntiAlias = true
+                    }
+
+                    val sx = edited.width.toFloat() / canvasSize.width.toFloat()
+                    val sy = edited.height.toFloat() / canvasSize.height.toFloat()
+
+                    strokes.forEach { stroke ->
+                        if (stroke.size == 1) {
+                            paint.style = AndroidPaint.Style.FILL
+                            canvas.drawCircle(
+                                stroke.first().x * sx,
+                                stroke.first().y * sy,
+                                (brushSize / 2f) * ((sx + sy) / 2f),
+                                paint
+                            )
+                            paint.style = AndroidPaint.Style.STROKE
+                        } else {
+                            paint.strokeWidth = brushSize * ((sx + sy) / 2f)
+                            for (i in 1 until stroke.size) {
+                                canvas.drawLine(
+                                    stroke[i - 1].x * sx,
+                                    stroke[i - 1].y * sy,
+                                    stroke[i].x * sx,
+                                    stroke[i].y * sy,
+                                    paint
+                                )
+                            }
+                        }
+                    }
+
+                    onSave(edited)
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AgilDark,
+                    contentColor = Color.White
+                )
+            ) {
+                Text("SALVAR")
+            }
+        }
+    }
+}
+
+private fun renderPdfPage(file: File, pageNumber: Int): Bitmap {
+    PDDocument.load(file).use { document ->
+        require(pageNumber in 1..document.numberOfPages) { "Página inválida." }
+        val renderer = PDFRenderer(document)
+        return renderer.renderImageWithDPI(
+            pageNumber - 1,
+            150f,
+            ImageType.RGB
+        )
+    }
+}
+
+private fun replacePdfPageWithBitmap(
+    file: File,
+    pageNumber: Int,
+    bitmap: Bitmap
+) {
+    val temp = File(file.parentFile, "${file.nameWithoutExtension}_borracha.pdf")
+
+    PDDocument.load(file).use { document ->
+        require(pageNumber in 1..document.numberOfPages) { "Página inválida." }
+
+        val page = document.getPage(pageNumber - 1)
+        val image = LosslessFactory.createFromImage(document, bitmap)
+
+        PDPageContentStream(
+            document,
+            page,
+            PDPageContentStream.AppendMode.OVERWRITE,
+            true,
+            true
+        ).use { content ->
+            content.drawImage(
+                image,
+                0f,
+                0f,
+                page.mediaBox.width,
+                page.mediaBox.height
+            )
+        }
+
+        document.save(temp)
+    }
+
+    if (!file.delete()) {
+        temp.delete()
+        error("Não foi possível substituir o PDF original.")
+    }
+
+    if (!temp.renameTo(file)) {
+        error("Não foi possível finalizar o PDF editado.")
     }
 }
 
