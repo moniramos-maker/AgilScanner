@@ -103,19 +103,19 @@ private enum class MachineType(
 private enum class DocumentType(val label: String, val suffix: String) {
     CONFIGURACAO("Relatório de Configuração", "CONFIGURACAO"),
     ATIVO("Relatório de Ativo", "ATIVO"),
+    REDE("Relatório de Rede", "REDE"),
     ESTATISTICA("Página de Estatística", "ESTATISTICA")
 }
 
-private fun DocumentType.labelFor(machineType: MachineType): String =
-    if (machineType == MachineType.NOVA && this == DocumentType.CONFIGURACAO) {
-        "Página de Configuração do Menu"
-    } else {
-        label
-    }
+private fun DocumentType.labelFor(machineType: MachineType): String = label
 
 private fun documentsFor(machineType: MachineType): List<DocumentType> =
     if (machineType == MachineType.NOVA) {
-        listOf(DocumentType.ATIVO, DocumentType.CONFIGURACAO)
+        listOf(
+            DocumentType.ATIVO,
+            DocumentType.REDE,
+            DocumentType.ESTATISTICA
+        )
     } else {
         listOf(
             DocumentType.CONFIGURACAO,
