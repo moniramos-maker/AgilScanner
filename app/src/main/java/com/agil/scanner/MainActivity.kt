@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PDFBoxResourceLoader.init(applicationContext)
-        setContent { AccessControlledApp { AgilScannerApp() } }
+        setContent { AccessControlledApp { offlineOnly -> AgilScannerApp(offlineOnly) } }
     }
 }
 
@@ -151,11 +151,12 @@ private data class ScannedDocument(
 private enum class HomeMode {
     EQUIPMENT,
     RAT,
-    FILES
+    FILES,
+    OFFLINE
 }
 
 @Composable
-private fun AgilScannerApp() {
+private fun AgilScannerApp(offlineOnly: Boolean = false) {
     var machineType by remember { mutableStateOf<MachineType?>(null) }
     var homeMode by remember { mutableStateOf<HomeMode?>(null) }
 
@@ -165,6 +166,22 @@ private fun AgilScannerApp() {
             color = AgilBackground
         ) {
             when {
+                offlineOnly && homeMode == null -> {
+                    OfflineHomeScreen(
+                        onScan = { homeMode = HomeMode.OFFLINE },
+                        onFiles = { homeMode = HomeMode.FILES }
+                    )
+                }
+
+                homeMode == HomeMode.OFFLINE -> {
+                    OfflineScannerScreen(
+                        onBack = {
+                            homeMode = null
+                            machineType = null
+                        }
+                    )
+                }
+
                 homeMode == HomeMode.RAT -> {
                     RatScreen(
                         onBack = {
@@ -206,6 +223,10 @@ private fun AgilScannerApp() {
                         onFiles = {
                             homeMode = HomeMode.FILES
                             machineType = null
+                        },
+                        onOffline = {
+                            homeMode = HomeMode.OFFLINE
+                            machineType = null
                         }
                     )
                 }
@@ -215,7 +236,7 @@ private fun AgilScannerApp() {
 }
 
 @Composable
-private fun BrandHeader(subtitle: String? = null) {
+fun BrandHeader(subtitle: String? = null) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -244,7 +265,8 @@ private fun BrandHeader(subtitle: String? = null) {
 private fun MachineSelectionScreen(
     onSelect: (MachineType) -> Unit,
     onRat: () -> Unit,
-    onFiles: () -> Unit
+    onFiles: () -> Unit,
+    onOffline: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -343,6 +365,45 @@ private fun MachineSelectionScreen(
                     )
                     Text(
                         text = "Reenviar, apagar arquivos ou remover páginas",
+                        color = AgilMuted,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 3.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOffline() },
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(22.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .background(Color(0xFF6B7280), RoundedCornerShape(10.dp))
+                )
+
+                Column(modifier = Modifier.padding(start = 14.dp)) {
+                    Text(
+                        text = "DIGITALIZAÇÃO OFFLINE",
+                        color = AgilDark,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "Digitalizar e salvar PDF no aparelho sem enviar para a nuvem",
                         color = AgilMuted,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 3.dp)
@@ -1979,7 +2040,7 @@ private fun uploadPdfToCloud(
     }.start()
 }
 
-private fun shareSinglePdf(
+fun shareSinglePdf(
     context: Context,
     file: File,
     message: String
