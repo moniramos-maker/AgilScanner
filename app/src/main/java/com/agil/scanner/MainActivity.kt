@@ -96,7 +96,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         PDFBoxResourceLoader.init(applicationContext)
         scheduleProjectSync(applicationContext)
-        setContent { AccessControlledApp { offlineOnly -> AgilScannerApp(offlineOnly) } }
+        setContent {
+            AppUpdateGate {
+                AccessControlledApp { offlineOnly -> AgilScannerApp(offlineOnly) }
+            }
+        }
     }
 }
 
