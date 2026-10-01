@@ -1604,21 +1604,6 @@ private fun ScannerScreen(
         }
     }
 
-    fun importPhotos(type: DocumentType) {
-        // Usa o scanner do Google também para fotos da galeria.
-        // Assim a folha passa por detecção de bordas, recorte e correção de perspectiva.
-        startScan(type)
-    }
-
-    fun importPdfs(type: DocumentType) {
-        if (chamado.isBlank()) {
-            Toast.makeText(context, "Informe o número do chamado.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        selectedImportType = type
-        importPdfsLauncher.launch("application/pdf")
-    }
-
     fun startScan(type: DocumentType) {
         if (chamado.isBlank()) {
             Toast.makeText(context, "Informe o número do chamado.", Toast.LENGTH_SHORT).show()
@@ -1640,6 +1625,21 @@ private fun ScannerScreen(
                     Toast.LENGTH_LONG
                 ).show()
             }
+    }
+
+    fun importPhotos(type: DocumentType) {
+        // Usa o scanner do Google também para fotos da galeria.
+        // Assim a folha passa por detecção de bordas, recorte e correção de perspectiva.
+        startScan(type)
+    }
+
+    fun importPdfs(type: DocumentType) {
+        if (chamado.isBlank()) {
+            Toast.makeText(context, "Informe o número do chamado.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        selectedImportType = type
+        importPdfsLauncher.launch("application/pdf")
     }
 
     fun buildAndShareFinalPdf() {
