@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents
@@ -358,6 +359,7 @@ private fun FileLibraryScreen(
     onBack: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    BackHandler { onBack() }
     var refreshKey by remember { mutableStateOf(0) }
     var selectedFile by remember { mutableStateOf<File?>(null) }
     var pageToDelete by remember { mutableStateOf("") }
@@ -430,7 +432,7 @@ private fun FileLibraryScreen(
             }
 
             OutlinedButton(onClick = onBack) {
-                Text("Voltar")
+                Text("← Voltar")
             }
         }
 
@@ -974,6 +976,8 @@ private fun RatScreen(
     val activity = androidx.compose.ui.platform.LocalContext.current as Activity
     val context = androidx.compose.ui.platform.LocalContext.current
 
+    BackHandler { onNewSession() }
+
     var chamado by remember { mutableStateOf("") }
     var ratFile by remember { mutableStateOf<File?>(null) }
     var pageCount by remember { mutableStateOf(0) }
@@ -1311,6 +1315,8 @@ private fun ScannerScreen(
     val activity = androidx.compose.ui.platform.LocalContext.current as Activity
     val context = androidx.compose.ui.platform.LocalContext.current
 
+    BackHandler { onBack() }
+
     var chamado by remember { mutableStateOf("") }
     var serial by remember { mutableStateOf("") }
     var serialInfo by remember { mutableStateOf("A série será tentada automaticamente ao digitalizar.") }
@@ -1549,6 +1555,15 @@ private fun ScannerScreen(
             .padding(horizontal = 18.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(onClick = onNewSession) {
+                Text("← Voltar")
+            }
+        }
+
         BrandHeader()
 
         Card(
@@ -1578,7 +1593,7 @@ private fun ScannerScreen(
                 }
 
                 OutlinedButton(onClick = onNewSession) {
-                    Text("Trocar")
+                    Text("Menu")
                 }
             }
         }
