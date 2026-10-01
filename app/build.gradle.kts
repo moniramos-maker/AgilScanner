@@ -23,7 +23,7 @@ android {
                 storeFile = file(keystorePath)
                 storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("ANDROID_KEY_ALIAS")
-                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+                keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
             }
         }
     }
