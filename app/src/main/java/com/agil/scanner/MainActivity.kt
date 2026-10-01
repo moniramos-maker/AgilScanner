@@ -359,7 +359,7 @@ private fun FileLibraryScreen(
     onBack: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    BackHandler { onBack() }
+    BackHandler { onNewSession() }
     var refreshKey by remember { mutableStateOf(0) }
     var selectedFile by remember { mutableStateOf<File?>(null) }
     var pageToDelete by remember { mutableStateOf("") }
@@ -976,7 +976,7 @@ private fun RatScreen(
     val activity = androidx.compose.ui.platform.LocalContext.current as Activity
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    BackHandler { onNewSession() }
+    BackHandler { onBack() }
 
     var chamado by remember { mutableStateOf("") }
     var ratFile by remember { mutableStateOf<File?>(null) }
@@ -1315,7 +1315,7 @@ private fun ScannerScreen(
     val activity = androidx.compose.ui.platform.LocalContext.current as Activity
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    BackHandler { onBack() }
+    BackHandler { onNewSession() }
 
     var chamado by remember { mutableStateOf("") }
     var serial by remember { mutableStateOf("") }
