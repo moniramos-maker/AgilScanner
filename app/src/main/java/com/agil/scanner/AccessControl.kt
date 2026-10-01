@@ -52,7 +52,7 @@ private data class TechnicianProfile(
     val project: String
 )
 
-private fun deviceId(context: Context): String {
+fun agilDeviceId(context: Context): String {
     val raw = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown"
     val source = raw + "|" + context.packageName
     return MessageDigest.getInstance("SHA-256")
@@ -113,7 +113,7 @@ private fun postJson(path: String, json: JSONObject): JSONObject {
 
 private fun registerDevice(context: Context, profile: TechnicianProfile): String {
     val json = JSONObject()
-        .put("deviceId", deviceId(context))
+        .put("deviceId", agilDeviceId(context))
         .put("name", profile.name)
         .put("company", profile.company)
         .put("phone", profile.phone)
@@ -126,7 +126,7 @@ private fun registerDevice(context: Context, profile: TechnicianProfile): String
 }
 
 private fun checkDevice(context: Context): String {
-    val json = JSONObject().put("deviceId", deviceId(context))
+    val json = JSONObject().put("deviceId", agilDeviceId(context))
     val result = postJson("/api/device-status", json)
     if (!result.optBoolean("ok", false)) error(result.optString("error", "Falha ao validar acesso."))
     return result.optString("status", "unregistered")
