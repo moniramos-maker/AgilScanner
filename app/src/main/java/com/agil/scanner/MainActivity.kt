@@ -366,7 +366,9 @@ private fun FileLibraryScreen(
     var eraseBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-        ?: context.filesDir    if (eraseFile != null && eraseBitmap != null) {
+        ?: context.filesDir
+
+    if (eraseFile != null && eraseBitmap != null) {
         ManualEraserEditor(
             bitmap = requireNotNull(eraseBitmap),
             pageNumber = erasePage,
