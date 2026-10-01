@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PDFBoxResourceLoader.init(applicationContext)
+        scheduleProjectSync(applicationContext)
         setContent { AccessControlledApp { offlineOnly -> AgilScannerApp(offlineOnly) } }
     }
 }
@@ -1986,53 +1987,24 @@ private fun uploadPdfToCloud(
     onStatus("Enviando para a nuvem…")
 
     Thread {
-        try {
-            val connection = (java.net.URL(CLOUD_UPLOAD_URL).openConnection() as java.net.HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 15000
-                readTimeout = 30000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/pdf")
-                setRequestProperty("X-Upload-Key", CLOUD_UPLOAD_KEY)
-                setRequestProperty("X-Chamado", safeFilePart(chamado))
-                setRequestProperty("X-File-Name", file.name)
-                setFixedLengthStreamingMode(file.length())
-            }
+        val ok = uploadProjectFileOnce(
+            context = context,
+            file = file,
+            chamado = chamado
+        )
 
-            file.inputStream().use { input ->
-                connection.outputStream.use { output ->
-                    input.copyTo(output)
-                }
-            }
-
-            val code = connection.responseCode
-            if (code in 200..299) {
-                (context as? Activity)?.runOnUiThread {
-                    onStatus("Salvo na nuvem ✓")
-                    Toast.makeText(context, "Salvo na nuvem ✓", Toast.LENGTH_SHORT).show()
-                }
-            } else {
-                val detail = try {
-                    connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                } catch (_: Exception) {
-                    ""
-                }
-                (context as? Activity)?.runOnUiThread {
-                    onStatus("Pendente de envio")
-                    Toast.makeText(
-                        context,
-                        "Nuvem pendente (erro $code). O PDF continua salvo no aparelho.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-            connection.disconnect()
-        } catch (_: Exception) {
+        if (ok) {
             (context as? Activity)?.runOnUiThread {
-                onStatus("Pendente de envio")
+                onStatus("Sincronizado ✓")
+                Toast.makeText(context, "Salvo na nuvem ✓", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            queueProjectUpload(context, file, chamado)
+            (context as? Activity)?.runOnUiThread {
+                onStatus("Pendente de sincronização")
                 Toast.makeText(
                     context,
-                    "Sem conexão com a nuvem. O PDF continua salvo no aparelho.",
+                    "Sem conexão. O arquivo ficou salvo e será enviado automaticamente quando a internet voltar.",
                     Toast.LENGTH_LONG
                 ).show()
             }
