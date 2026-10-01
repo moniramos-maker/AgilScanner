@@ -167,13 +167,6 @@ private fun AgilScannerApp(offlineOnly: Boolean = false) {
             color = AgilBackground
         ) {
             when {
-                offlineOnly && homeMode == null -> {
-                    OfflineHomeScreen(
-                        onScan = { homeMode = HomeMode.OFFLINE },
-                        onFiles = { homeMode = HomeMode.FILES }
-                    )
-                }
-
                 homeMode == HomeMode.OFFLINE -> {
                     OfflineScannerScreen(
                         onBack = {
@@ -213,6 +206,7 @@ private fun AgilScannerApp(offlineOnly: Boolean = false) {
 
                 else -> {
                     MachineSelectionScreen(
+                        offlineProjectMode = offlineOnly,
                         onSelect = {
                             homeMode = HomeMode.EQUIPMENT
                             machineType = it
@@ -264,6 +258,7 @@ fun BrandHeader(subtitle: String? = null) {
 
 @Composable
 private fun MachineSelectionScreen(
+    offlineProjectMode: Boolean,
     onSelect: (MachineType) -> Unit,
     onRat: () -> Unit,
     onFiles: () -> Unit,
@@ -277,7 +272,22 @@ private fun MachineSelectionScreen(
         verticalArrangement = Arrangement.Center
     ) {
         BrandHeader("Digitalização padronizada de OS em PDF")
-        Spacer(Modifier.height(34.dp))
+        Spacer(Modifier.height(20.dp))
+
+        if (offlineProjectMode) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF4D6))
+            ) {
+                Text(
+                    text = "Sem internet: você pode continuar os atendimentos normalmente. Os arquivos do projeto ficarão pendentes e serão enviados automaticamente quando a conexão voltar.",
+                    modifier = Modifier.padding(16.dp),
+                    color = AgilDark,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            Spacer(Modifier.height(18.dp))
+        }
 
         Text(
             text = "Selecione a impressora",
@@ -398,13 +408,13 @@ private fun MachineSelectionScreen(
 
                 Column(modifier = Modifier.padding(start = 14.dp)) {
                     Text(
-                        text = "DIGITALIZAÇÃO OFFLINE",
+                        text = "DIGITALIZAÇÃO LOCAL",
                         color = AgilDark,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = "Digitalizar e salvar PDF no aparelho sem enviar para a nuvem",
+                        text = "Documento particular/local: salvar somente no aparelho e nunca enviar para a nuvem",
                         color = AgilMuted,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 3.dp)
