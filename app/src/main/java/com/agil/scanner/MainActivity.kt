@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PDFBoxResourceLoader.init(applicationContext)
-        setContent { AgilScannerApp() }
+        setContent { AccessControlledApp { AgilScannerApp() } }
     }
 }
 
