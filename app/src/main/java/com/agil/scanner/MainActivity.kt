@@ -1968,8 +1968,8 @@ private fun DocumentCard(
     }
 }
 
-private const val CLOUD_UPLOAD_URL = "https://agilscanner.vercel.app/api/upload"
-private const val CLOUD_UPLOAD_KEY = "AgilScan_2026#Upload\$Cloud!9X7K2M"
+const val CLOUD_UPLOAD_URL = "https://agilscanner.vercel.app/api/upload"
+const val CLOUD_UPLOAD_KEY = "AgilScan_2026#Upload\$Cloud!9X7K2M"
 
 private fun safeFilePart(value: String): String =
     value.trim()
