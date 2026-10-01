@@ -359,7 +359,7 @@ private fun FileLibraryScreen(
     onBack: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    BackHandler { onNewSession() }
+    BackHandler { onBack() }
     var refreshKey by remember { mutableStateOf(0) }
     var selectedFile by remember { mutableStateOf<File?>(null) }
     var pageToDelete by remember { mutableStateOf("") }
