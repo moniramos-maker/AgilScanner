@@ -85,6 +85,17 @@ private fun saveProfile(context: Context, p: TechnicianProfile) {
         .apply()
 }
 
+private fun saveApprovedCache(context: Context, approved: Boolean) {
+    prefs(context).edit()
+        .putBoolean("lastKnownApproved", approved)
+        .putLong("lastApprovalCheckAt", System.currentTimeMillis())
+        .apply()
+}
+
+private fun hasApprovedCache(context: Context): Boolean =
+    prefs(context).getBoolean("lastKnownApproved", false)
+
+
 private fun postJson(path: String, json: JSONObject): JSONObject {
     val conn = (URL(ACCESS_BASE_URL + path).openConnection() as HttpURLConnection).apply {
         requestMethod = "POST"
@@ -122,7 +133,7 @@ private fun checkDevice(context: Context): String {
 }
 
 @Composable
-fun AccessControlledApp(content: @Composable () -> Unit) {
+fun AccessControlledApp(content: @Composable (offlineOnly: Boolean) -> Unit) {
     val context = LocalContext.current
     var profile by remember { mutableStateOf(loadProfile(context)) }
     var status by remember { mutableStateOf(if (profile == null) "unregistered" else "checking") }
@@ -136,13 +147,20 @@ fun AccessControlledApp(content: @Composable () -> Unit) {
             try {
                 val s = checkDevice(context)
                 (context as? android.app.Activity)?.runOnUiThread {
+                    if (s == "approved") saveApprovedCache(context, true)
+                    if (s == "blocked" || s == "rejected" || s == "expired") saveApprovedCache(context, false)
                     status = s
                     busy = false
                 }
             } catch (_: Exception) {
                 (context as? android.app.Activity)?.runOnUiThread {
-                    message = "Não foi possível validar o acesso. Verifique a internet."
-                    status = "error"
+                    if (hasApprovedCache(context)) {
+                        message = "Sem conexão. Modo offline liberado somente para digitalização local."
+                        status = "offline-approved"
+                    } else {
+                        message = "Não foi possível validar o acesso. Verifique a internet."
+                        status = "error"
+                    }
                     busy = false
                 }
             }
@@ -154,7 +172,12 @@ fun AccessControlledApp(content: @Composable () -> Unit) {
     }
 
     if (status == "approved") {
-        content()
+        content(false)
+        return
+    }
+
+    if (status == "offline-approved") {
+        content(true)
         return
     }
 
