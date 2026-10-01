@@ -18,6 +18,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntSize
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -363,6 +364,7 @@ private fun FileLibraryScreen(
     var refreshKey by remember { mutableStateOf(0) }
     var selectedFile by remember { mutableStateOf<File?>(null) }
     var pageToDelete by remember { mutableStateOf("") }
+    var currentEditPage by remember { mutableStateOf(1) }
     var eraseFile by remember { mutableStateOf<File?>(null) }
     var erasePage by remember { mutableStateOf(1) }
     var eraseBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -496,6 +498,7 @@ private fun FileLibraryScreen(
                         OutlinedButton(
                             onClick = {
                                 selectedFile = if (selectedFile == file) null else file
+                                currentEditPage = 1
                                 pageToDelete = ""
                             }
                         ) {
@@ -504,89 +507,174 @@ private fun FileLibraryScreen(
                     }
 
                     if (selectedFile == file) {
+                        val activePage = currentEditPage.coerceIn(1, pages.coerceAtLeast(1))
+                        val preview = remember(file.absolutePath, file.lastModified(), activePage, refreshKey) {
+                            runCatching { renderPdfPage(file, activePage, 110f) }.getOrNull()
+                        }
+
                         Text(
-                            text = "Se uma foto ficou tremida ou uma página precisa sair, informe o número da página.",
+                            text = "Página $activePage de $pages",
+                            color = AgilDark,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        preview?.let { bitmap ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F2F5))
+                            ) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "Prévia da página $activePage",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(360.dp)
+                                        .padding(8.dp),
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { currentEditPage = (activePage - 1).coerceAtLeast(1) },
+                                enabled = activePage > 1,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("← Anterior")
+                            }
+                            OutlinedButton(
+                                onClick = { currentEditPage = (activePage + 1).coerceAtMost(pages) },
+                                enabled = activePage < pages,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Próxima →")
+                            }
+                        }
+
+                        Text(
+                            text = "Ajustes da página",
                             color = AgilMuted,
                             style = MaterialTheme.typography.bodySmall
                         )
 
-                        OutlinedTextField(
-                            value = pageToDelete,
-                            onValueChange = { pageToDelete = it.filter(Char::isDigit) },
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Página para apagar (1 a $pages)") },
-                            singleLine = true
-                        )
-
-                        Button(
-                            onClick = {
-                                val page = pageToDelete.toIntOrNull()
-                                if (page == null || page !in 1..pages) {
-                                    Toast.makeText(
-                                        context,
-                                        "Informe uma página válida.",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                } else if (pages <= 1) {
-                                    Toast.makeText(
-                                        context,
-                                        "O PDF tem apenas uma página. Apague o arquivo inteiro se necessário.",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                } else {
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
                                     try {
-                                        removePdfPage(file, page)
-                                        pageToDelete = ""
+                                        val original = renderPdfPage(file, activePage)
+                                        val rotated = rotateBitmap90(original)
+                                        replacePdfPageWithBitmap(file, activePage, rotated)
                                         refreshKey++
-                                        Toast.makeText(
-                                            context,
-                                            "Página $page removida.",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    } catch (e: Exception) {
-                                        Toast.makeText(
-                                            context,
-                                            "Erro ao remover página: ${e.message}",
-                                            Toast.LENGTH_LONG
-                                        ).show()
+                                        Toast.makeText(context, "Página girada.", Toast.LENGTH_SHORT).show()
+                                    } catch (ex: Exception) {
+                                        Toast.makeText(context, "Erro ao girar: ${ex.message}", Toast.LENGTH_LONG).show()
                                     }
-                                }
-                            },
-                            enabled = pages > 1,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = AgilBlue,
-                                contentColor = AgilDark
-                            )
-                        ) {
-                            Text("APAGAR ESTA PÁGINA")
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("GIRAR")
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    try {
+                                        val original = renderPdfPage(file, activePage)
+                                        val enhanced = enhanceDocumentBitmap(original, false)
+                                        replacePdfPageWithBitmap(file, activePage, enhanced)
+                                        refreshKey++
+                                        Toast.makeText(context, "Leitura melhorada.", Toast.LENGTH_SHORT).show()
+                                    } catch (ex: Exception) {
+                                        Toast.makeText(context, "Erro no filtro: ${ex.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("MELHORAR")
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    try {
+                                        val original = renderPdfPage(file, activePage)
+                                        val bw = enhanceDocumentBitmap(original, true)
+                                        replacePdfPageWithBitmap(file, activePage, bw)
+                                        refreshKey++
+                                        Toast.makeText(context, "Filtro P&B aplicado.", Toast.LENGTH_SHORT).show()
+                                    } catch (ex: Exception) {
+                                        Toast.makeText(context, "Erro no filtro: ${ex.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("P&B")
+                            }
                         }
 
-                        OutlinedButton(
-                            onClick = {
-                                val page = pageToDelete.toIntOrNull()
-                                if (page == null || page !in 1..pages) {
-                                    Toast.makeText(
-                                        context,
-                                        "Informe a página que deseja editar.",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
                                     try {
-                                        eraseBitmap = renderPdfPage(file, page)
+                                        eraseBitmap = renderPdfPage(file, activePage)
                                         eraseFile = file
-                                        erasePage = page
-                                    } catch (e: Exception) {
+                                        erasePage = activePage
+                                    } catch (ex: Exception) {
                                         Toast.makeText(
                                             context,
-                                            "Erro ao abrir página: ${e.message}",
+                                            "Erro ao abrir página: ${ex.message}",
                                             Toast.LENGTH_LONG
                                         ).show()
                                     }
-                                }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("BORRACHA")
                             }
-                        ) {
-                            Text("BORRACHA MANUAL")
+
+                            Button(
+                                onClick = {
+                                    if (pages <= 1) {
+                                        Toast.makeText(
+                                            context,
+                                            "O PDF tem apenas uma página. Apague o arquivo inteiro se necessário.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    } else {
+                                        try {
+                                            removePdfPage(file, activePage)
+                                            currentEditPage = activePage.coerceAtMost(pages - 1)
+                                            refreshKey++
+                                            Toast.makeText(context, "Página removida.", Toast.LENGTH_SHORT).show()
+                                        } catch (ex: Exception) {
+                                            Toast.makeText(context, "Erro ao remover página: ${ex.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                },
+                                enabled = pages > 1,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AgilBlue,
+                                    contentColor = AgilDark
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("EXCLUIR")
+                            }
                         }
+
+                        Text(
+                            text = "Para refazer o enquadramento de uma folha, digitalize ou escolha novamente a foto pelo fluxo do scanner; ele faz o recorte e a perspectiva automaticamente.",
+                            color = AgilMuted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
 
                     OutlinedButton(
@@ -786,16 +874,54 @@ private fun ManualEraserEditor(
     }
 }
 
-private fun renderPdfPage(file: File, pageNumber: Int): Bitmap {
+private fun renderPdfPage(file: File, pageNumber: Int, dpi: Float = 220f): Bitmap {
     PDDocument.load(file).use { document ->
         require(pageNumber in 1..document.numberOfPages) { "Página inválida." }
         val renderer = PDFRenderer(document)
         return renderer.renderImageWithDPI(
             pageNumber - 1,
-            150f,
+            dpi,
             ImageType.RGB
         )
     }
+}
+
+private fun rotateBitmap90(bitmap: Bitmap): Bitmap {
+    val matrix = android.graphics.Matrix().apply { postRotate(90f) }
+    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+}
+
+private fun enhanceDocumentBitmap(bitmap: Bitmap, blackAndWhite: Boolean): Bitmap {
+    val output = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+    val canvas = AndroidCanvas(output)
+
+    val contrast = if (blackAndWhite) 1.42f else 1.14f
+    val brightness = if (blackAndWhite) 8f else 5f
+    val translate = (-0.5f * contrast + 0.5f) * 255f + brightness
+
+    val colorMatrix = android.graphics.ColorMatrix(
+        floatArrayOf(
+            contrast, 0f, 0f, 0f, translate,
+            0f, contrast, 0f, 0f, translate,
+            0f, 0f, contrast, 0f, translate,
+            0f, 0f, 0f, 1f, 0f
+        )
+    )
+
+    if (blackAndWhite) {
+        val saturation = android.graphics.ColorMatrix().apply { setSaturation(0f) }
+        saturation.postConcat(colorMatrix)
+        colorMatrix.set(saturation)
+    }
+
+    val paint = AndroidPaint().apply {
+        isAntiAlias = true
+        isFilterBitmap = true
+        colorFilter = android.graphics.ColorMatrixColorFilter(colorMatrix)
+    }
+
+    canvas.drawBitmap(bitmap, 0f, 0f, paint)
+    return output
 }
 
 private fun replacePdfPageWithBitmap(
@@ -985,7 +1111,7 @@ private fun RatScreen(
 
     val options = remember {
         GmsDocumentScannerOptions.Builder()
-            .setGalleryImportAllowed(false)
+            .setGalleryImportAllowed(true)
             .setPageLimit(20)
             .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
             .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
@@ -1190,7 +1316,7 @@ private fun RatScreen(
                 }
 
                 Text(
-                    text = "Ou importe várias fotos/arquivos já existentes:",
+                    text = "Também é possível escolher fotos da galeria com tratamento automático ou importar PDFs:",
                     color = AgilMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -1204,7 +1330,7 @@ private fun RatScreen(
                             if (chamado.isBlank()) {
                                 Toast.makeText(context, "Informe o número do chamado.", Toast.LENGTH_SHORT).show()
                             } else {
-                                importRatPhotosLauncher.launch("image/*")
+                                startRatScan()
                             }
                         },
                         modifier = Modifier.weight(1f)
@@ -1346,7 +1472,7 @@ private fun ScannerScreen(
 
     val options = remember {
         GmsDocumentScannerOptions.Builder()
-            .setGalleryImportAllowed(false)
+            .setGalleryImportAllowed(true)
             .setPageLimit(20)
             .setResultFormats(
                 GmsDocumentScannerOptions.RESULT_FORMAT_PDF,
@@ -1479,12 +1605,9 @@ private fun ScannerScreen(
     }
 
     fun importPhotos(type: DocumentType) {
-        if (chamado.isBlank()) {
-            Toast.makeText(context, "Informe o número do chamado.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        selectedImportType = type
-        importPhotosLauncher.launch("image/*")
+        // Usa o scanner do Google também para fotos da galeria.
+        // Assim a folha passa por detecção de bordas, recorte e correção de perspectiva.
+        startScan(type)
     }
 
     fun importPdfs(type: DocumentType) {
@@ -1644,7 +1767,7 @@ private fun ScannerScreen(
         )
 
         Text(
-            text = "Cada item pode ser digitalizado pela câmera ou importado da galeria/arquivos. Você pode selecionar várias fotos ou PDFs de uma vez.",
+            text = "Fotos da galeria passam pelo tratamento de documento: detecção da folha, recorte e correção de perspectiva. PDFs continuam podendo ser importados diretamente.",
             color = AgilMuted,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 2.dp)
@@ -1757,7 +1880,7 @@ private fun DocumentCard(
             }
 
             Text(
-                text = "Ou importe várias fotos/arquivos:",
+                text = "Ou use uma foto existente / importe PDFs:",
                 color = AgilMuted,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -1770,7 +1893,7 @@ private fun DocumentCard(
                     onClick = onImportPhotos,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("FOTOS")
+                    Text("FOTO / GALERIA")
                 }
 
                 OutlinedButton(
