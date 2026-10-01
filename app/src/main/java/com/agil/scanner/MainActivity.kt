@@ -981,6 +981,7 @@ private fun RatScreen(
     var chamado by remember { mutableStateOf("") }
     var ratFile by remember { mutableStateOf<File?>(null) }
     var pageCount by remember { mutableStateOf(0) }
+    var cloudStatus by remember { mutableStateOf<String?>(null) }
 
     val options = remember {
         GmsDocumentScannerOptions.Builder()
@@ -1238,6 +1239,12 @@ private fun RatScreen(
         Button(
             onClick = {
                 ratFile?.let {
+                    uploadPdfToCloud(
+                        context = context,
+                        file = it,
+                        chamado = chamado,
+                        onStatus = { status -> cloudStatus = status }
+                    )
                     shareSinglePdf(
                         context = context,
                         file = it,
@@ -1255,6 +1262,16 @@ private fun RatScreen(
             shape = RoundedCornerShape(14.dp)
         ) {
             Text("ENVIAR RAT PELO WHATSAPP")
+        }
+
+        cloudStatus?.let { status ->
+            Text(
+                text = status,
+                color = if (status.contains("✓")) Color(0xFF2E7D32) else AgilMuted,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
@@ -1320,6 +1337,7 @@ private fun ScannerScreen(
     var chamado by remember { mutableStateOf("") }
     var serial by remember { mutableStateOf("") }
     var serialInfo by remember { mutableStateOf("A série será tentada automaticamente ao digitalizar.") }
+    var cloudStatus by remember { mutableStateOf<String?>(null) }
     var selectedType by remember { mutableStateOf<DocumentType?>(null) }
     var selectedImportType by remember { mutableStateOf<DocumentType?>(null) }
 
@@ -1530,6 +1548,13 @@ private fun ScannerScreen(
             merger.destinationFileName = finalPdf.absolutePath
             merger.mergeDocuments(MemoryUsageSetting.setupMainMemoryOnly())
 
+            uploadPdfToCloud(
+                context = context,
+                file = finalPdf,
+                chamado = chamado,
+                onStatus = { status -> cloudStatus = status }
+            )
+
             shareSinglePdf(
                 context = context,
                 file = finalPdf,
@@ -1663,6 +1688,16 @@ private fun ScannerScreen(
             Text("GERAR PDF ÚNICO E ENVIAR PELO WHATSAPP")
         }
 
+        cloudStatus?.let { status ->
+            Text(
+                text = status,
+                color = if (status.contains("✓")) Color(0xFF2E7D32) else AgilMuted,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
+            )
+        }
+
         if (!ready) {
             Text(
                 text = "Para liberar o envio, confirme a série e conclua todos os documentos.",
@@ -1749,11 +1784,77 @@ private fun DocumentCard(
     }
 }
 
+private const val CLOUD_UPLOAD_URL = "https://agilscanner.vercel.app/api/upload"
+private const val CLOUD_UPLOAD_KEY = "AgilScan_2026#Upload$Cloud!9X7K2M"
+
 private fun safeFilePart(value: String): String =
     value.trim()
         .uppercase()
         .replace(Regex("[^A-Z0-9_-]"), "_")
         .ifBlank { "SEM_IDENTIFICACAO" }
+
+private fun uploadPdfToCloud(
+    context: Context,
+    file: File,
+    chamado: String,
+    onStatus: (String) -> Unit
+) {
+    onStatus("Enviando para a nuvem…")
+
+    Thread {
+        try {
+            val connection = (java.net.URL(CLOUD_UPLOAD_URL).openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 15000
+                readTimeout = 30000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/pdf")
+                setRequestProperty("X-Upload-Key", CLOUD_UPLOAD_KEY)
+                setRequestProperty("X-Chamado", safeFilePart(chamado))
+                setRequestProperty("X-File-Name", file.name)
+                setFixedLengthStreamingMode(file.length())
+            }
+
+            file.inputStream().use { input ->
+                connection.outputStream.use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            val code = connection.responseCode
+            if (code in 200..299) {
+                (context as? Activity)?.runOnUiThread {
+                    onStatus("Salvo na nuvem ✓")
+                    Toast.makeText(context, "Salvo na nuvem ✓", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                val detail = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                } catch (_: Exception) {
+                    ""
+                }
+                (context as? Activity)?.runOnUiThread {
+                    onStatus("Pendente de envio")
+                    Toast.makeText(
+                        context,
+                        "Nuvem pendente (erro $code). O PDF continua salvo no aparelho.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            connection.disconnect()
+        } catch (_: Exception) {
+            (context as? Activity)?.runOnUiThread {
+                onStatus("Pendente de envio")
+                Toast.makeText(
+                    context,
+                    "Sem conexão com a nuvem. O PDF continua salvo no aparelho.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }.start()
+}
 
 private fun shareSinglePdf(
     context: Context,
