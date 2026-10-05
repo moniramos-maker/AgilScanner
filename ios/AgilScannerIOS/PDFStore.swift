@@ -22,11 +22,11 @@ enum PDFStore {
         let name: String
         switch mode {
         case .rat:
-            name = "(normalizedChamado)_RAT.pdf"
+            name = "\(normalizedChamado)_RAT.pdf"
         case .newPrinter:
-            name = "(normalizedChamado)_(normalizedSerial.isEmpty ? "SEM_SERIAL" : normalizedSerial)_INSTALADA.pdf"
+            name = "\(normalizedChamado)_\(normalizedSerial.isEmpty ? "SEM_SERIAL" : normalizedSerial)_INSTALADA.pdf"
         case .oldPrinter:
-            name = "(normalizedChamado)_(normalizedSerial.isEmpty ? "SEM_SERIAL" : normalizedSerial)_RETIRADA.pdf"
+            name = "\(normalizedChamado)_\(normalizedSerial.isEmpty ? "SEM_SERIAL" : normalizedSerial)_RETIRADA.pdf"
         }
 
         let url = documentsDirectory.appendingPathComponent(name)
@@ -47,8 +47,8 @@ enum PDFStore {
 
         let cleanLabel = clean(label)
         let name = cleanLabel.isEmpty
-            ? "LOCAL_(stamp).pdf"
-            : "LOCAL_(cleanLabel)_(stamp).pdf"
+            ? "LOCAL_\(stamp).pdf"
+            : "LOCAL_\(cleanLabel)_\(stamp).pdf"
 
         let url = documentsDirectory.appendingPathComponent(name)
         try createPDF(images: images, at: url)
