@@ -1,6 +1,5 @@
 import Foundation
 import UIKit
-import CryptoKit
 
 @MainActor
 final class AccessController: ObservableObject {
@@ -18,12 +17,7 @@ final class AccessController: ObservableObject {
     private let baseURL = URL(string: "https://agilscanner.vercel.app")!
     private let defaults = UserDefaults.standard
 
-    private var deviceId: String {
-        let raw = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
-        let source = raw + "|com.agil.scanner.ios"
-        let digest = SHA256.hash(data: Data(source.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
+    private var deviceId: String { DeviceIdentity.value }
 
     func bootstrap() async {
         if defaults.string(forKey: "profile.name") == nil {
