@@ -9,6 +9,7 @@ struct AgilScannerIOSApp: App {
             RootView()
                 .environmentObject(access)
                 .task {
+                    ProjectSyncController.shared.start()
                     await access.bootstrap()
                 }
         }
