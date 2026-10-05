@@ -94,6 +94,6 @@ private struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-extension URL: Identifiable {
+extension URL: @retroactive Identifiable {
     public var id: String { absoluteString }
 }
