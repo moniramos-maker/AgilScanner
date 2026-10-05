@@ -123,7 +123,7 @@ final class AccessController: ObservableObject {
 
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard (200...299).contains(http.statusCode) else {
-            throw AccessError.message(json["error"] as? String ?? "Erro (http.statusCode).")
+            throw AccessError.message(json["error"] as? String ?? "Erro \(http.statusCode).")
         }
         return json
     }
