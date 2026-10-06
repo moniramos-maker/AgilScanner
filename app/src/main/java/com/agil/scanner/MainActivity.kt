@@ -340,7 +340,7 @@ private fun MachineSelectionScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = "Digitalizar e enviar RAT pelo número do chamado",
+                        text = "Digitalizar RAT para compor o arquivo único da impressora",
                         color = AgilMuted,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 3.dp)
@@ -1183,7 +1183,6 @@ private fun RatScreen(
     var chamado by remember { mutableStateOf("") }
     var ratFile by remember { mutableStateOf<File?>(null) }
     var pageCount by remember { mutableStateOf(0) }
-    var cloudStatus by remember { mutableStateOf<String?>(null) }
 
     val options = remember {
         GmsDocumentScannerOptions.Builder()
@@ -1331,7 +1330,7 @@ private fun RatScreen(
                         color = AgilDark
                     )
                     Text(
-                        text = "Somente o número do chamado é obrigatório",
+                        text = "A RAT ficará salva no aparelho e será anexada às evidências da impressora",
                         color = AgilMuted,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -1441,12 +1440,6 @@ private fun RatScreen(
         Button(
             onClick = {
                 ratFile?.let {
-                    uploadPdfToCloud(
-                        context = context,
-                        file = it,
-                        chamado = chamado,
-                        onStatus = { status -> cloudStatus = status }
-                    )
                     shareSinglePdf(
                         context = context,
                         file = it,
@@ -1463,18 +1456,9 @@ private fun RatScreen(
             ),
             shape = RoundedCornerShape(14.dp)
         ) {
-            Text("ENVIAR RAT PELO WHATSAPP")
+            Text("SALVAR / COMPARTILHAR RAT")
         }
 
-        cloudStatus?.let { status ->
-            Text(
-                text = status,
-                color = if (status.contains("✓")) Color(0xFF2E7D32) else AgilMuted,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center
-            )
-        }
     }
 }
 
@@ -1537,6 +1521,8 @@ private fun ScannerScreen(
     BackHandler { onNewSession() }
 
     var chamado by remember { mutableStateOf("") }
+    var prefixo by remember { mutableStateOf("") }
+    var agencia by remember { mutableStateOf("") }
     var serial by remember { mutableStateOf("") }
     var serialInfo by remember { mutableStateOf("A série será tentada automaticamente ao digitalizar.") }
     var cloudStatus by remember { mutableStateOf<String?>(null) }
@@ -1719,6 +1705,11 @@ private fun ScannerScreen(
     }
 
     fun buildAndShareFinalPdf() {
+        if (prefixo.isBlank() || agencia.isBlank()) {
+            Toast.makeText(context, "Informe o prefixo e o nome da agência como estão no cronograma.", Toast.LENGTH_LONG).show()
+            return
+        }
+
         if (serial.isBlank()) {
             Toast.makeText(context, "Confirme ou informe a série.", Toast.LENGTH_SHORT).show()
             return
@@ -1733,6 +1724,16 @@ private fun ScannerScreen(
             val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
                 ?: context.filesDir
 
+            val ratFile = File(outputDir, "${safeFilePart(chamado)}_RAT.pdf")
+            if (!ratFile.exists()) {
+                Toast.makeText(
+                    context,
+                    "Digitalize primeiro a RAT deste chamado. Ela é obrigatória no arquivo único.",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+
             val safeCall = safeFilePart(chamado)
             val safeSerial = safeFilePart(serial.uppercase())
             val finalPdf = File(
@@ -1741,6 +1742,7 @@ private fun ScannerScreen(
             )
 
             val merger = PDFMergerUtility()
+            merger.addSource(ratFile)
             requiredDocuments.forEach { document ->
                 merger.addSource(requireNotNull(savedFiles[document]).file)
             }
@@ -1751,6 +1753,9 @@ private fun ScannerScreen(
                 context = context,
                 file = finalPdf,
                 chamado = chamado,
+                prefixo = prefixo,
+                agencia = agencia,
+                serial = serial,
                 onStatus = { status -> cloudStatus = status }
             )
 
@@ -1770,7 +1775,11 @@ private fun ScannerScreen(
 
     val count = requiredDocuments.count { savedFiles.containsKey(it) }
     val total = requiredDocuments.size
-    val ready = count == total && serial.isNotBlank()
+    val ratReady = remember(chamado) {
+        val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
+        File(outputDir, "${safeFilePart(chamado)}_RAT.pdf").exists()
+    }
+    val ready = count == total && serial.isNotBlank() && prefixo.isNotBlank() && agencia.isNotBlank() && ratReady
 
     Column(
         modifier = Modifier
@@ -1996,6 +2005,9 @@ private fun uploadPdfToCloud(
     context: Context,
     file: File,
     chamado: String,
+    prefixo: String,
+    agencia: String,
+    serial: String,
     onStatus: (String) -> Unit
 ) {
     onStatus("Enviando para a nuvem…")
@@ -2004,7 +2016,10 @@ private fun uploadPdfToCloud(
         val ok = uploadProjectFileOnce(
             context = context,
             file = file,
-            chamado = chamado
+            chamado = chamado,
+            prefixo = prefixo,
+            agencia = agencia,
+            serial = serial
         )
 
         if (ok) {
@@ -2013,7 +2028,14 @@ private fun uploadPdfToCloud(
                 Toast.makeText(context, "Salvo na nuvem ✓", Toast.LENGTH_SHORT).show()
             }
         } else {
-            queueProjectUpload(context, file, chamado)
+            queueProjectUpload(
+                context = context,
+                file = file,
+                chamado = chamado,
+                prefixo = prefixo,
+                agencia = agencia,
+                serial = serial
+            )
             (context as? Activity)?.runOnUiThread {
                 onStatus("Pendente de sincronização")
                 Toast.makeText(
