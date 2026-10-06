@@ -6,11 +6,20 @@ function send(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function safeSegment(value) {
+function safeFileSegment(value) {
   return String(value || "")
     .trim()
     .replace(/[^A-Za-z0-9_-]/g, "_")
-    .slice(0, 80);
+    .slice(0, 120);
+}
+
+function safeFolderName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 140);
 }
 
 function encodeSharingUrl(url) {
@@ -84,27 +93,27 @@ async function resolveRootFolder(token) {
   return graph(token, "/shares/" + shareId + "/driveItem?$select=id,name,parentReference");
 }
 
-async function ensureChamadoFolder(token, rootId, chamado) {
+async function ensureChildFolder(token, parentId, folderName) {
   const children = await graph(
     token,
-    "/me/drive/items/" + encodeURIComponent(rootId) + "/children?$select=id,name,folder"
+    "/me/drive/items/" + encodeURIComponent(parentId) + "/children?$select=id,name,folder"
   );
 
   const existing = (children.value || []).find(
-    item => item.folder && String(item.name).toUpperCase() === chamado.toUpperCase()
+    item => item.folder && String(item.name).toUpperCase() === folderName.toUpperCase()
   );
   if (existing) return existing;
 
   return graph(
     token,
-    "/me/drive/items/" + encodeURIComponent(rootId) + "/children",
+    "/me/drive/items/" + encodeURIComponent(parentId) + "/children",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: chamado,
+        name: folderName,
         folder: {},
-        "@microsoft.graph.conflictBehavior": "rename"
+        "@microsoft.graph.conflictBehavior": "fail"
       })
     }
   );
@@ -132,13 +141,22 @@ export default async function handler(req, res) {
       return send(res, 401, { ok: false, error: "Não autorizado." });
     }
 
-    const chamado = safeSegment(req.headers["x-chamado"]);
-    const fileName = safeSegment(
+    const chamado = safeFileSegment(req.headers["x-chamado"]);
+    const prefixo = safeFolderName(req.headers["x-prefixo"]);
+    const agencia = safeFolderName(req.headers["x-agencia"]);
+    const serial = safeFolderName(req.headers["x-serial"]).toUpperCase();
+    const fileName = safeFileSegment(
       String(req.headers["x-file-name"] || "arquivo.pdf").replace(/\.pdf$/i, "")
     ) + ".pdf";
 
     if (!chamado) {
       return send(res, 400, { ok: false, error: "Chamado não informado." });
+    }
+    if (!prefixo || !agencia) {
+      return send(res, 400, { ok: false, error: "Prefixo e nome da agência são obrigatórios." });
+    }
+    if (!serial) {
+      return send(res, 400, { ok: false, error: "Serial não informado." });
     }
 
     const pdf = await readRawBody(req);
@@ -148,11 +166,14 @@ export default async function handler(req, res) {
 
     const token = await refreshAccessToken();
     const root = await resolveRootFolder(token);
-    const folder = await ensureChamadoFolder(token, root.id, chamado);
+
+    const agencyFolderName = safeFolderName(prefixo + " - " + agencia);
+    const agencyFolder = await ensureChildFolder(token, root.id, agencyFolderName);
+    const serialFolder = await ensureChildFolder(token, agencyFolder.id, serial);
 
     const uploadPath =
       "/me/drive/items/" +
-      encodeURIComponent(folder.id) +
+      encodeURIComponent(serialFolder.id) +
       ":/" +
       encodeURIComponent(fileName) +
       ":/content";
@@ -166,6 +187,8 @@ export default async function handler(req, res) {
     return send(res, 200, {
       ok: true,
       chamado,
+      agencyFolder: agencyFolderName,
+      serialFolder: serial,
       fileName,
       itemId: uploaded.id,
       webUrl: uploaded.webUrl || null
