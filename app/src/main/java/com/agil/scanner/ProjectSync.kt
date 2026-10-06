@@ -20,7 +20,10 @@ private const val SYNC_WORK = "agil_project_upload_queue"
 
 private data class PendingUpload(
     val path: String,
-    val chamado: String
+    val chamado: String,
+    val prefixo: String,
+    val agencia: String,
+    val serial: String
 )
 
 private fun loadPending(context: Context): MutableList<PendingUpload> {
@@ -34,7 +37,15 @@ private fun loadPending(context: Context): MutableList<PendingUpload> {
             val path = item.optString("path")
             val chamado = item.optString("chamado")
             if (path.isNotBlank() && chamado.isNotBlank()) {
-                list.add(PendingUpload(path, chamado))
+                list.add(
+                    PendingUpload(
+                        path = path,
+                        chamado = chamado,
+                        prefixo = item.optString("prefixo"),
+                        agencia = item.optString("agencia"),
+                        serial = item.optString("serial")
+                    )
+                )
             }
         }
     } catch (_: Exception) {
@@ -49,6 +60,9 @@ private fun savePending(context: Context, items: List<PendingUpload>) {
             JSONObject()
                 .put("path", item.path)
                 .put("chamado", item.chamado)
+                .put("prefixo", item.prefixo)
+                .put("agencia", item.agencia)
+                .put("serial", item.serial)
         )
     }
     context.getSharedPreferences(SYNC_PREFS, Context.MODE_PRIVATE)
@@ -57,10 +71,25 @@ private fun savePending(context: Context, items: List<PendingUpload>) {
         .apply()
 }
 
-fun queueProjectUpload(context: Context, file: File, chamado: String) {
+fun queueProjectUpload(
+    context: Context,
+    file: File,
+    chamado: String,
+    prefixo: String,
+    agencia: String,
+    serial: String
+) {
     val items = loadPending(context)
     if (items.none { it.path == file.absolutePath }) {
-        items.add(PendingUpload(file.absolutePath, chamado.trim()))
+        items.add(
+            PendingUpload(
+                path = file.absolutePath,
+                chamado = chamado.trim(),
+                prefixo = prefixo.trim(),
+                agencia = agencia.trim(),
+                serial = serial.trim()
+            )
+        )
         savePending(context, items)
     }
     scheduleProjectSync(context)
@@ -92,7 +121,10 @@ fun scheduleProjectSync(context: Context) {
 fun uploadProjectFileOnce(
     context: Context,
     file: File,
-    chamado: String
+    chamado: String,
+    prefixo: String,
+    agencia: String,
+    serial: String
 ): Boolean {
     if (!file.exists() || file.length() == 0L) return false
 
@@ -104,7 +136,10 @@ fun uploadProjectFileOnce(
         setRequestProperty("Content-Type", "application/pdf")
         setRequestProperty("X-Upload-Key", CLOUD_UPLOAD_KEY)
         setRequestProperty("X-Device-Id", agilDeviceId(context))
-        setRequestProperty("X-Chamado", chamado.trim().uppercase().replace(Regex("[^A-Z0-9_-]"), "_"))
+        setRequestProperty("X-Chamado", chamado.trim())
+        setRequestProperty("X-Prefixo", prefixo.trim())
+        setRequestProperty("X-Agencia", agencia.trim())
+        setRequestProperty("X-Serial", serial.trim().uppercase())
         setRequestProperty("X-File-Name", file.name)
         setFixedLengthStreamingMode(file.length())
     }
@@ -140,9 +175,12 @@ class ProjectUploadWorker(
                 removePending(applicationContext, item.path)
             } else {
                 val ok = uploadProjectFileOnce(
-                    applicationContext,
-                    file,
-                    item.chamado
+                    context = applicationContext,
+                    file = file,
+                    chamado = item.chamado,
+                    prefixo = item.prefixo,
+                    agencia = item.agencia,
+                    serial = item.serial
                 )
                 if (ok) {
                     removePending(applicationContext, item.path)
