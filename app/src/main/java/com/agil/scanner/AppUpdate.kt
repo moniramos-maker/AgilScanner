@@ -230,8 +230,6 @@ fun AppUpdateGate(content: @Composable () -> Unit) {
         return
     }
 
-    BackHandler(enabled = true) {}
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -260,7 +258,7 @@ fun AppUpdateGate(content: @Composable () -> Unit) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "Para continuar usando o ÁGIL Scanner, atualize o aplicativo.",
+                    "Existe uma versão mais nova. Você pode atualizar agora ou entrar no aplicativo e atualizar depois.",
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -324,6 +322,20 @@ fun AppUpdateGate(content: @Composable () -> Unit) {
                             else -> "BAIXAR E INSTALAR"
                         }
                     )
+                }
+
+                Button(
+                    onClick = {
+                        update = null
+                        message = ""
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFE5E7EB),
+                        contentColor = Color(0xFF101722)
+                    )
+                ) {
+                    Text("ENTRAR NO APP E ATUALIZAR DEPOIS")
                 }
             }
         }
