@@ -1326,12 +1326,25 @@ private fun RatScreen(
                     outputDir,
                     "${safeFilePart(record.chamado)}_${safeFilePart(record.serial)}_INSTALADA.pdf"
                 )
+                val tempFinal = File(
+                    outputDir,
+                    "${safeFilePart(record.chamado)}_${safeFilePart(record.serial)}_INSTALADA_TEMP.pdf"
+                )
 
                 val merger = PDFMergerUtility()
                 merger.addSource(rat)
                 merger.addSource(evidenceFile)
-                merger.destinationFileName = finalPdf.absolutePath
+                merger.destinationFileName = tempFinal.absolutePath
                 merger.mergeDocuments(MemoryUsageSetting.setupMainMemoryOnly())
+
+                if (finalPdf.exists() && !finalPdf.delete()) {
+                    tempFinal.delete()
+                    error("Não foi possível substituir o arquivo da instalação.")
+                }
+                if (!tempFinal.renameTo(finalPdf)) {
+                    tempFinal.delete()
+                    error("Não foi possível finalizar o PDF da instalação.")
+                }
 
                 finalFiles.add(finalPdf)
 
@@ -1852,7 +1865,7 @@ private fun ScannerScreen(
             val safeSerial = safeFilePart(serial.uppercase())
             val evidencePdf = File(
                 outputDir,
-                "${safeCall}_${safeSerial}_EVIDENCIAS.pdf"
+                "${safeCall}_${safeSerial}_${machineType.finalStatus}.pdf"
             )
 
             val merger = PDFMergerUtility()
@@ -1885,7 +1898,7 @@ private fun ScannerScreen(
             shareSinglePdf(
                 context = context,
                 file = evidencePdf,
-                message = "Chamado ${chamado.trim()} - Série ${serial.trim().uppercase()} - evidências"
+                message = evidencePdf.name
             )
 
             Toast.makeText(
