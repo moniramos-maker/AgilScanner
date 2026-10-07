@@ -53,6 +53,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -137,14 +138,12 @@ private fun DocumentType.labelFor(machineType: MachineType): String = label
 private fun documentsFor(machineType: MachineType): List<DocumentType> =
     if (machineType == MachineType.NOVA) {
         listOf(
-            DocumentType.RAT,
             DocumentType.ATIVO,
             DocumentType.REDE,
             DocumentType.ESTATISTICA
         )
     } else {
         listOf(
-            DocumentType.RAT,
             DocumentType.CONFIGURACAO,
             DocumentType.ATIVO,
             DocumentType.ESTATISTICA
@@ -1535,6 +1534,20 @@ private fun ScannerScreen(
     val savedFiles = remember { mutableStateMapOf<DocumentType, ScannedDocument>() }
     val requiredDocuments = documentsFor(machineType)
 
+    LaunchedEffect(chamado, machineType) {
+        if (chamado.isBlank()) return@LaunchedEffect
+        val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
+        DocumentType.entries.forEach { type ->
+            val file = File(
+                outputDir,
+                "${safeFilePart(chamado)}_${machineType.suffix}_${type.suffix}.pdf"
+            )
+            if (file.exists() && file.length() > 0L) {
+                savedFiles[type] = ScannedDocument(file, getPdfPageCount(file))
+            }
+        }
+    }
+
     val options = remember {
         GmsDocumentScannerOptions.Builder()
             .setGalleryImportAllowed(true)
@@ -1707,19 +1720,76 @@ private fun ScannerScreen(
         importPdfsLauncher.launch("application/pdf")
     }
 
-    fun buildAndShareFinalPdf() {
+    fun validateBaseData(): Boolean {
         if (prefixo.isBlank() || agencia.isBlank()) {
-            Toast.makeText(context, "Informe o prefixo e o cidade como estão no cronograma.", Toast.LENGTH_LONG).show()
-            return
+            Toast.makeText(context, "Informe o prefixo e a cidade como estão no cronograma.", Toast.LENGTH_LONG).show()
+            return false
         }
 
         if (serial.isBlank()) {
             Toast.makeText(context, "Confirme ou informe a série.", Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
 
         if (requiredDocuments.any { !savedFiles.containsKey(it) }) {
             Toast.makeText(context, "Digitalize todos os documentos obrigatórios.", Toast.LENGTH_SHORT).show()
+            return false
+        }
+
+        return true
+    }
+
+    fun buildEvidencePdfAndShare() {
+        if (!validateBaseData()) return
+
+        try {
+            val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                ?: context.filesDir
+
+            val safeCall = safeFilePart(chamado)
+            val safeSerial = safeFilePart(serial.uppercase())
+            val evidencePdf = File(
+                outputDir,
+                "${safeCall}_${safeSerial}_EVIDENCIAS.pdf"
+            )
+
+            val merger = PDFMergerUtility()
+            requiredDocuments.forEach { document ->
+                merger.addSource(requireNotNull(savedFiles[document]).file)
+            }
+            merger.destinationFileName = evidencePdf.absolutePath
+            merger.mergeDocuments(MemoryUsageSetting.setupMainMemoryOnly())
+
+            shareSinglePdf(
+                context = context,
+                file = evidencePdf,
+                message = "Chamado ${chamado.trim()} - Série ${serial.trim().uppercase()} - evidências para liberação da OS"
+            )
+
+            Toast.makeText(
+                context,
+                "Evidências geradas. Após a liberação da OS, volte e digitalize a RAT para finalizar.",
+                Toast.LENGTH_LONG
+            ).show()
+        } catch (e: Exception) {
+            Toast.makeText(
+                context,
+                "Erro ao gerar evidências: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    fun buildAndShareFinalPdf() {
+        if (!validateBaseData()) return
+
+        val rat = savedFiles[DocumentType.RAT]
+        if (rat == null) {
+            Toast.makeText(
+                context,
+                "A RAT ainda não foi digitalizada. Primeiro envie as evidências para o sistema do banco, aguarde a liberação da OS e depois digitalize a RAT.",
+                Toast.LENGTH_LONG
+            ).show()
             return
         }
 
@@ -1735,6 +1805,7 @@ private fun ScannerScreen(
             )
 
             val merger = PDFMergerUtility()
+            merger.addSource(rat.file)
             requiredDocuments.forEach { document ->
                 merger.addSource(requireNotNull(savedFiles[document]).file)
             }
@@ -1759,7 +1830,7 @@ private fun ScannerScreen(
         } catch (e: Exception) {
             Toast.makeText(
                 context,
-                "Erro ao gerar PDF único: ${e.message}",
+                "Erro ao gerar PDF final: ${e.message}",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -1767,7 +1838,9 @@ private fun ScannerScreen(
 
     val count = requiredDocuments.count { savedFiles.containsKey(it) }
     val total = requiredDocuments.size
-    val ready = count == total && serial.isNotBlank() && prefixo.isNotBlank() && agencia.isNotBlank()
+    val evidenceReady = count == total && serial.isNotBlank() && prefixo.isNotBlank() && agencia.isNotBlank()
+    val ratReady = savedFiles.containsKey(DocumentType.RAT)
+    val finalReady = evidenceReady && ratReady
 
     Column(
         modifier = Modifier
@@ -1875,6 +1948,50 @@ private fun ScannerScreen(
             )
         }
 
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7E6)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(15.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
+                Text(
+                    text = if (ratReady) "✓ RAT de Atendimento" else "RAT de Atendimento — depois da liberação da OS",
+                    color = AgilDark,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = if (ratReady) {
+                        "${savedFiles[DocumentType.RAT]?.pageCount ?: 0} página(s) digitalizada(s)"
+                    } else {
+                        "Primeiro envie as evidências ao sistema do banco. Quando a OS for liberada, volte aqui e digitalize a RAT."
+                    },
+                    color = AgilMuted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Button(
+                    onClick = { startScan(DocumentType.RAT) },
+                    enabled = evidenceReady,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AgilBlue,
+                        contentColor = AgilDark
+                    )
+                ) {
+                    Text(if (ratReady) "Refazer RAT" else "Digitalizar RAT")
+                }
+                if (!evidenceReady) {
+                    Text(
+                        text = "A RAT será liberada no app depois que as evidências obrigatórias estiverem prontas.",
+                        color = AgilMuted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+
         Text(
             text = "Documentação: $count de $total concluída",
             color = AgilDark,
@@ -1890,8 +2007,8 @@ private fun ScannerScreen(
         }
 
         Button(
-            onClick = { buildAndShareFinalPdf() },
-            enabled = ready,
+            onClick = { buildEvidencePdfAndShare() },
+            enabled = evidenceReady,
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = AgilDark,
@@ -1900,7 +2017,21 @@ private fun ScannerScreen(
             ),
             shape = RoundedCornerShape(14.dp)
         ) {
-            Text("GERAR PDF ÚNICO E ENVIAR PELO WHATSAPP")
+            Text("1. GERAR EVIDÊNCIAS E ENVIAR PARA LIBERAR A OS")
+        }
+
+        Button(
+            onClick = { buildAndShareFinalPdf() },
+            enabled = finalReady,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = AgilBlue,
+                contentColor = AgilDark,
+                disabledContainerColor = Color(0xFFD7DBE1)
+            ),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text("2. FINALIZAR COM A RAT E ENVIAR PDF ÚNICO")
         }
 
         cloudStatus?.let { status ->
@@ -1913,7 +2044,7 @@ private fun ScannerScreen(
             )
         }
 
-        if (!ready) {
+        if (!evidenceReady) {
             val pendencias = buildList {
                 if (prefixo.isBlank()) add("prefixo")
                 if (agencia.isBlank()) add("cidade")
@@ -1926,7 +2057,15 @@ private fun ScannerScreen(
                 }
             }
             Text(
-                text = "Para liberar o envio, falta: " + pendencias.joinToString(", ") + ".",
+                text = "Para gerar as evidências, falta: " + pendencias.joinToString(", ") + ".",
+                color = AgilMuted,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else if (!ratReady) {
+            Text(
+                text = "Evidências prontas. Envie para o sistema do banco e, após a liberação da OS, digitalize a RAT para gerar o PDF final.",
                 color = AgilMuted,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
