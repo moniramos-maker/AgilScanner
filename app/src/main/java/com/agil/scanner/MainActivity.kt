@@ -1775,10 +1775,8 @@ private fun ScannerScreen(
 
     val count = requiredDocuments.count { savedFiles.containsKey(it) }
     val total = requiredDocuments.size
-    val ratReady = remember(chamado) {
-        val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
-        File(outputDir, "${safeFilePart(chamado)}_RAT.pdf").exists()
-    }
+    val outputDirForRat = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
+    val ratReady = File(outputDirForRat, "${safeFilePart(chamado)}_RAT.pdf").exists()
     val ready = count == total && serial.isNotBlank() && prefixo.isNotBlank() && agencia.isNotBlank() && ratReady
 
     Column(
@@ -1836,6 +1834,25 @@ private fun ScannerScreen(
             onValueChange = { chamado = it },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Número do chamado") },
+            singleLine = true
+        )
+
+        OutlinedTextField(
+            value = prefixo,
+            onValueChange = { prefixo = it.trim() },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Prefixo da agência") },
+            placeholder = { Text("Ex.: 0929") },
+            singleLine = true
+        )
+
+        OutlinedTextField(
+            value = agencia,
+            onValueChange = { agencia = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Nome da agência") },
+            placeholder = { Text("Exatamente como está no cronograma") },
+            supportingText = { Text("A pasta será criada como: PREFIXO - NOME DA AGÊNCIA") },
             singleLine = true
         )
 
@@ -1907,8 +1924,15 @@ private fun ScannerScreen(
         }
 
         if (!ready) {
+            val pendencias = buildList {
+                if (prefixo.isBlank()) add("prefixo")
+                if (agencia.isBlank()) add("nome da agência")
+                if (serial.isBlank()) add("serial")
+                if (!ratReady) add("RAT do chamado")
+                if (count < total) add("documentos obrigatórios")
+            }
             Text(
-                text = "Para liberar o envio, confirme a série e conclua todos os documentos.",
+                text = "Para liberar o envio, falta: " + pendencias.joinToString(", ") + ".",
                 color = AgilMuted,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
