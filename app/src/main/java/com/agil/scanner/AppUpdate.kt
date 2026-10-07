@@ -63,6 +63,23 @@ private fun currentVersionCode(context: Context): Int {
     }
 }
 
+private fun downloadedApkVersionCode(context: Context): Int? {
+    val file = apkFile(context)
+    if (!file.exists() || file.length() == 0L) return null
+    val info = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0) ?: return null
+    return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode.toInt() else {
+        @Suppress("DEPRECATION")
+        info.versionCode
+    }
+}
+
+private fun clearStaleDownloadedApk(context: Context) {
+    val downloadedVersion = downloadedApkVersionCode(context) ?: return
+    if (downloadedVersion <= currentVersionCode(context)) {
+        apkFile(context).delete()
+    }
+}
+
 private fun checkForUpdate(): AppUpdateInfo? {
     val conn = (URL(RELEASES_API).openConnection() as HttpURLConnection).apply {
         requestMethod = "GET"
@@ -174,6 +191,7 @@ fun AppUpdateGate(content: @Composable () -> Unit) {
     var message by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
+        clearStaleDownloadedApk(context)
         Thread {
             val result = try { checkForUpdate() } catch (_: Exception) { null }
             activity.runOnUiThread {
@@ -189,10 +207,7 @@ fun AppUpdateGate(content: @Composable () -> Unit) {
                 val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ?: -1L
                 if (downloadId != null && id == downloadId) {
                     downloading = false
-                    message = "Download concluído. Preparando instalação..."
-                    if (!installDownloadedApk(context)) {
-                        message = "Autorize a instalação de apps desta fonte e volte ao ÁGIL Scanner."
-                    }
+                    message = "Download concluído. Toque em INSTALAR ATUALIZAÇÃO para continuar."
                 }
             }
         }
@@ -266,12 +281,24 @@ fun AppUpdateGate(content: @Composable () -> Unit) {
 
                 Button(
                     onClick = {
-                        if (apkFile(context).exists() && canInstallPackages(context)) {
-                            installDownloadedApk(context)
-                        } else if (apkFile(context).exists() && !canInstallPackages(context)) {
-                            openInstallPermission(context)
-                            message = "Depois de autorizar, volte e toque em INSTALAR ATUALIZAÇÃO."
+                        clearStaleDownloadedApk(context)
+                        val localApk = apkFile(context)
+                        val localVersion = downloadedApkVersionCode(context)
+
+                        if (localApk.exists() && localVersion != null && localVersion > currentVersionCode(context)) {
+                            if (canInstallPackages(context)) {
+                                val opened = installDownloadedApk(context)
+                                message = if (opened) {
+                                    "Instalador aberto. Conclua a instalação e depois abra o ÁGIL Scanner novamente."
+                                } else {
+                                    "Não foi possível abrir o instalador."
+                                }
+                            } else {
+                                openInstallPermission(context)
+                                message = "Autorize esta fonte. Depois volte ao ÁGIL Scanner e toque em INSTALAR ATUALIZAÇÃO."
+                            }
                         } else {
+                            if (localApk.exists()) localApk.delete()
                             try {
                                 downloading = true
                                 message = "Baixando atualização..."
@@ -293,7 +320,7 @@ fun AppUpdateGate(content: @Composable () -> Unit) {
                     Text(
                         when {
                             downloading -> "BAIXANDO..."
-                            apkFile(context).exists() -> "INSTALAR ATUALIZAÇÃO"
+                            downloadedApkVersionCode(context)?.let { it > currentVersionCode(context) } == true -> "INSTALAR ATUALIZAÇÃO"
                             else -> "BAIXAR E INSTALAR"
                         }
                     )
