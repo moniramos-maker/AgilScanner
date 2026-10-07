@@ -342,7 +342,7 @@ private fun MachineSelectionScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = "Digitalizar RAT para compor o arquivo único da impressora",
+                        text = "Depois da liberação da OS, informe o chamado e o app unifica RAT + evidências",
                         color = AgilMuted,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 3.dp)
@@ -1182,9 +1182,16 @@ private fun RatScreen(
 
     BackHandler { onBack() }
 
+    var avulsa by remember { mutableStateOf(false) }
     var chamado by remember { mutableStateOf("") }
+    var prefixoAvulso by remember { mutableStateOf("") }
     var ratFile by remember { mutableStateOf<File?>(null) }
     var pageCount by remember { mutableStateOf(0) }
+    var cloudStatus by remember { mutableStateOf<String?>(null) }
+
+    val records = remember(chamado) {
+        if (chamado.isBlank()) emptyList() else installedEvidenceForCall(context, chamado)
+    }
 
     val options = remember {
         GmsDocumentScannerOptions.Builder()
@@ -1197,6 +1204,18 @@ private fun RatScreen(
 
     val scanner = remember { GmsDocumentScanning.getClient(options) }
 
+    fun ratOutputFile(): File {
+        val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+            ?: context.filesDir
+        if (!outputDir.exists()) outputDir.mkdirs()
+
+        return if (avulsa) {
+            File(outputDir, "${safeFilePart(prefixoAvulso)}_RAT_RETIRADA_AVULSA.pdf")
+        } else {
+            File(outputDir, "${safeFilePart(chamado)}_RAT.pdf")
+        }
+    }
+
     val scannerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -1206,26 +1225,15 @@ private fun RatScreen(
 
             if (pdf?.uri != null) {
                 try {
-                    val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-                        ?: context.filesDir
-
-                    if (!outputDir.exists()) outputDir.mkdirs()
-
-                    val output = File(
-                        outputDir,
-                        "${safeFilePart(chamado)}_RAT.pdf"
-                    )
-
+                    val output = ratOutputFile()
                     context.contentResolver.openInputStream(pdf.uri).use { input ->
                         FileOutputStream(output).use { out ->
                             requireNotNull(input) { "Não foi possível abrir o PDF gerado." }
                             input.copyTo(out)
                         }
                     }
-
                     ratFile = output
                     pageCount = pdf.pageCount
-
                     Toast.makeText(
                         context,
                         "RAT salva com ${pdf.pageCount} página(s).",
@@ -1242,34 +1250,12 @@ private fun RatScreen(
         }
     }
 
-    val importRatPhotosLauncher = rememberLauncherForActivityResult(
-        contract = GetMultipleContents()
-    ) { uris ->
-        if (uris.isNotEmpty()) {
-            try {
-                val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-                    ?: context.filesDir
-                if (!outputDir.exists()) outputDir.mkdirs()
-                val output = File(outputDir, "${safeFilePart(chamado)}_RAT.pdf")
-                createPdfFromImageUris(context, uris, output)
-                ratFile = output
-                pageCount = getPdfPageCount(output)
-                Toast.makeText(context, "${uris.size} foto(s) importada(s).", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(context, "Erro ao importar fotos: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
     val importRatPdfLauncher = rememberLauncherForActivityResult(
         contract = GetMultipleContents()
     ) { uris ->
         if (uris.isNotEmpty()) {
             try {
-                val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-                    ?: context.filesDir
-                if (!outputDir.exists()) outputDir.mkdirs()
-                val output = File(outputDir, "${safeFilePart(chamado)}_RAT.pdf")
+                val output = ratOutputFile()
                 mergePdfUris(context, uris, output)
                 ratFile = output
                 pageCount = getPdfPageCount(output)
@@ -1281,13 +1267,24 @@ private fun RatScreen(
     }
 
     fun startRatScan() {
-        if (chamado.isBlank()) {
-            Toast.makeText(
-                context,
-                "Informe o número do chamado.",
-                Toast.LENGTH_SHORT
-            ).show()
-            return
+        if (avulsa) {
+            if (prefixoAvulso.isBlank()) {
+                Toast.makeText(context, "Informe o prefixo da agência.", Toast.LENGTH_SHORT).show()
+                return
+            }
+        } else {
+            if (chamado.isBlank()) {
+                Toast.makeText(context, "Informe o número do chamado.", Toast.LENGTH_SHORT).show()
+                return
+            }
+            if (records.isEmpty()) {
+                Toast.makeText(
+                    context,
+                    "Não encontrei evidências de impressora instalada para este chamado neste aparelho.",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
         }
 
         scanner.getStartScanIntent(activity)
@@ -1305,6 +1302,77 @@ private fun RatScreen(
             }
     }
 
+    fun finalizeNormalRat() {
+        val rat = ratFile ?: return
+        if (records.isEmpty()) {
+            Toast.makeText(
+                context,
+                "Não encontrei evidências de instalação para este chamado.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        try {
+            val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                ?: context.filesDir
+            val finalFiles = mutableListOf<File>()
+
+            records.forEach { record ->
+                val evidenceFile = File(record.filePath)
+                if (!evidenceFile.exists()) return@forEach
+
+                val finalPdf = File(
+                    outputDir,
+                    "${safeFilePart(record.chamado)}_${safeFilePart(record.serial)}_INSTALADA.pdf"
+                )
+
+                val merger = PDFMergerUtility()
+                merger.addSource(rat)
+                merger.addSource(evidenceFile)
+                merger.destinationFileName = finalPdf.absolutePath
+                merger.mergeDocuments(MemoryUsageSetting.setupMainMemoryOnly())
+
+                finalFiles.add(finalPdf)
+
+                uploadPdfToCloud(
+                    context = context,
+                    file = finalPdf,
+                    chamado = record.chamado,
+                    prefixo = record.prefixo,
+                    agencia = record.cidade,
+                    serial = record.serial,
+                    onStatus = { status -> cloudStatus = status }
+                )
+            }
+
+            if (finalFiles.isEmpty()) {
+                Toast.makeText(context, "Nenhum PDF final foi gerado.", Toast.LENGTH_LONG).show()
+                return
+            }
+
+            if (finalFiles.size == 1) {
+                shareSinglePdf(
+                    context = context,
+                    file = finalFiles.first(),
+                    message = "Chamado ${chamado.trim()} - RAT + evidências da instalação"
+                )
+            } else {
+                shareMultiplePdfs(
+                    context = context,
+                    files = finalFiles,
+                    message = "Chamado ${chamado.trim()} - RAT + evidências das instalações"
+                )
+            }
+        } catch (e: Exception) {
+            Toast.makeText(
+                context,
+                "Erro ao gerar PDF final: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1314,47 +1382,81 @@ private fun RatScreen(
     ) {
         BrandHeader("RAT de Atendimento")
 
-        Card(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = AgilBlueSoft)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 13.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Button(
+                onClick = {
+                    avulsa = false
+                    ratFile = null
+                    pageCount = 0
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (!avulsa) AgilDark else Color(0xFFE5E7EB),
+                    contentColor = if (!avulsa) Color.White else AgilDark
+                )
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "RAT DE ATENDIMENTO",
-                        fontWeight = FontWeight.Bold,
-                        color = AgilDark
-                    )
-                    Text(
-                        text = "A RAT ficará salva no aparelho e será anexada às evidências da impressora",
-                        color = AgilMuted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
+                Text("RAT DO CHAMADO")
+            }
 
-                OutlinedButton(onClick = onBack) {
-                    Text("Voltar")
-                }
+            Button(
+                onClick = {
+                    avulsa = true
+                    ratFile = null
+                    pageCount = 0
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (avulsa) AgilDark else Color(0xFFE5E7EB),
+                    contentColor = if (avulsa) Color.White else AgilDark
+                )
+            ) {
+                Text("RAT AVULSA")
             }
         }
 
-        OutlinedTextField(
-            value = chamado,
-            onValueChange = {
-                chamado = it
-                ratFile = null
-                pageCount = 0
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Número do chamado") },
-            singleLine = true
-        )
+        if (!avulsa) {
+            OutlinedTextField(
+                value = chamado,
+                onValueChange = {
+                    chamado = it
+                    ratFile = null
+                    pageCount = 0
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Número do chamado") },
+                supportingText = {
+                    Text(
+                        if (chamado.isBlank()) {
+                            "Digite o chamado para localizar automaticamente as evidências da impressora instalada."
+                        } else if (records.isEmpty()) {
+                            "Nenhuma evidência instalada localizada neste aparelho."
+                        } else {
+                            "${records.size} impressora(s) instalada(s) localizada(s): " +
+                                records.joinToString(", ") { it.serial }
+                        }
+                    )
+                },
+                singleLine = true
+            )
+        } else {
+            OutlinedTextField(
+                value = prefixoAvulso,
+                onValueChange = {
+                    prefixoAvulso = it
+                    ratFile = null
+                    pageCount = 0
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Prefixo / número da agência") },
+                supportingText = {
+                    Text("Use somente para RAT avulsa de desinstalação, sem chamado.")
+                },
+                singleLine = true
+            )
+        }
 
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -1375,8 +1477,10 @@ private fun RatScreen(
                 Text(
                     text = if (ratFile != null) {
                         "$pageCount página(s) no PDF"
+                    } else if (avulsa) {
+                        "Digitalize a RAT avulsa da retirada."
                     } else {
-                        "Pode conter uma ou várias páginas"
+                        "A RAT será unificada automaticamente com as evidências encontradas pelo chamado."
                     },
                     color = AgilMuted,
                     style = MaterialTheme.typography.bodySmall
@@ -1392,75 +1496,73 @@ private fun RatScreen(
                     Text(if (ratFile != null) "Refazer RAT" else "Digitalizar RAT")
                 }
 
-                Text(
-                    text = "Também é possível escolher fotos da galeria com tratamento automático ou importar PDFs:",
-                    color = AgilMuted,
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                OutlinedButton(
+                    onClick = {
+                        if (
+                            (avulsa && prefixoAvulso.isNotBlank()) ||
+                            (!avulsa && chamado.isNotBlank() && records.isNotEmpty())
+                        ) {
+                            importRatPdfLauncher.launch("application/pdf")
+                        } else {
+                            startRatScan()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    OutlinedButton(
-                        onClick = {
-                            if (chamado.isBlank()) {
-                                Toast.makeText(context, "Informe o número do chamado.", Toast.LENGTH_SHORT).show()
-                            } else {
-                                startRatScan()
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("IMPORTAR FOTOS")
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            if (chamado.isBlank()) {
-                                Toast.makeText(context, "Informe o número do chamado.", Toast.LENGTH_SHORT).show()
-                            } else {
-                                importRatPdfLauncher.launch("application/pdf")
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("IMPORTAR PDFs")
-                    }
+                    Text("IMPORTAR PDF DA RAT")
                 }
             }
         }
 
-        if (ratFile != null) {
+        if (avulsa) {
+            Button(
+                onClick = {
+                    ratFile?.let {
+                        shareSinglePdf(
+                            context = context,
+                            file = it,
+                            message = "RAT avulsa de desinstalação - Agência ${prefixoAvulso.trim()}"
+                        )
+                    }
+                },
+                enabled = prefixoAvulso.isNotBlank() && ratFile != null,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AgilDark,
+                    contentColor = Color.White,
+                    disabledContainerColor = Color(0xFFD7DBE1)
+                )
+            ) {
+                Text("ENVIAR RAT AVULSA PELO WHATSAPP")
+            }
+        } else {
+            Button(
+                onClick = { finalizeNormalRat() },
+                enabled = chamado.isNotBlank() && records.isNotEmpty() && ratFile != null,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AgilDark,
+                    contentColor = Color.White,
+                    disabledContainerColor = Color(0xFFD7DBE1)
+                )
+            ) {
+                Text("UNIFICAR RAT + EVIDÊNCIAS E ENVIAR")
+            }
+        }
+
+        cloudStatus?.let { status ->
             Text(
-                text = "Arquivo: ${safeFilePart(chamado)}_RAT.pdf",
-                color = AgilMuted,
-                style = MaterialTheme.typography.bodySmall
+                text = status,
+                color = if (status.contains("✓")) Color(0xFF2E7D32) else AgilMuted,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
             )
         }
 
-        Button(
-            onClick = {
-                ratFile?.let {
-                    shareSinglePdf(
-                        context = context,
-                        file = it,
-                        message = "Chamado ${chamado.trim()} - RAT de atendimento"
-                    )
-                }
-            },
-            enabled = chamado.isNotBlank() && ratFile != null,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = AgilDark,
-                contentColor = Color.White,
-                disabledContainerColor = Color(0xFFD7DBE1)
-            ),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Text("SALVAR / COMPARTILHAR RAT")
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+            Text("← Voltar")
         }
-
     }
 }
 
@@ -1760,15 +1862,39 @@ private fun ScannerScreen(
             merger.destinationFileName = evidencePdf.absolutePath
             merger.mergeDocuments(MemoryUsageSetting.setupMainMemoryOnly())
 
+            saveEvidenceRecord(
+                context = context,
+                chamado = chamado,
+                prefixo = prefixo,
+                cidade = agencia,
+                serial = serial,
+                file = evidencePdf,
+                instalada = machineType == MachineType.NOVA
+            )
+
+            uploadPdfToCloud(
+                context = context,
+                file = evidencePdf,
+                chamado = chamado,
+                prefixo = prefixo,
+                agencia = agencia,
+                serial = serial,
+                onStatus = { status -> cloudStatus = status }
+            )
+
             shareSinglePdf(
                 context = context,
                 file = evidencePdf,
-                message = "Chamado ${chamado.trim()} - Série ${serial.trim().uppercase()} - evidências para liberação da OS"
+                message = "Chamado ${chamado.trim()} - Série ${serial.trim().uppercase()} - evidências"
             )
 
             Toast.makeText(
                 context,
-                "Evidências geradas. Após a liberação da OS, volte e digitalize a RAT para finalizar.",
+                if (machineType == MachineType.NOVA) {
+                    "Evidências salvas. Quando a OS for liberada, use a aba RAT e informe este chamado."
+                } else {
+                    "Evidências da retirada salvas e enviadas."
+                },
                 Toast.LENGTH_LONG
             ).show()
         } catch (e: Exception) {
@@ -1780,67 +1906,9 @@ private fun ScannerScreen(
         }
     }
 
-    fun buildAndShareFinalPdf() {
-        if (!validateBaseData()) return
-
-        val rat = savedFiles[DocumentType.RAT]
-        if (rat == null) {
-            Toast.makeText(
-                context,
-                "A RAT ainda não foi digitalizada. Primeiro envie as evidências para o sistema do banco, aguarde a liberação da OS e depois digitalize a RAT.",
-                Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-
-        try {
-            val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-                ?: context.filesDir
-
-            val safeCall = safeFilePart(chamado)
-            val safeSerial = safeFilePart(serial.uppercase())
-            val finalPdf = File(
-                outputDir,
-                "${safeCall}_${safeSerial}_${machineType.finalStatus}.pdf"
-            )
-
-            val merger = PDFMergerUtility()
-            merger.addSource(rat.file)
-            requiredDocuments.forEach { document ->
-                merger.addSource(requireNotNull(savedFiles[document]).file)
-            }
-            merger.destinationFileName = finalPdf.absolutePath
-            merger.mergeDocuments(MemoryUsageSetting.setupMainMemoryOnly())
-
-            uploadPdfToCloud(
-                context = context,
-                file = finalPdf,
-                chamado = chamado,
-                prefixo = prefixo,
-                agencia = agencia,
-                serial = serial,
-                onStatus = { status -> cloudStatus = status }
-            )
-
-            shareSinglePdf(
-                context = context,
-                file = finalPdf,
-                message = "Chamado ${chamado.trim()} - Série ${serial.trim().uppercase()} - ${machineType.finalStatus.lowercase()}"
-            )
-        } catch (e: Exception) {
-            Toast.makeText(
-                context,
-                "Erro ao gerar PDF final: ${e.message}",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
     val count = requiredDocuments.count { savedFiles.containsKey(it) }
     val total = requiredDocuments.size
     val evidenceReady = count == total && serial.isNotBlank() && prefixo.isNotBlank() && agencia.isNotBlank()
-    val ratReady = savedFiles.containsKey(DocumentType.RAT)
-    val finalReady = evidenceReady && ratReady
 
     Column(
         modifier = Modifier
@@ -1948,50 +2016,6 @@ private fun ScannerScreen(
             )
         }
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7E6)),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(15.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp)
-            ) {
-                Text(
-                    text = if (ratReady) "✓ RAT de Atendimento" else "RAT de Atendimento — depois da liberação da OS",
-                    color = AgilDark,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = if (ratReady) {
-                        "${savedFiles[DocumentType.RAT]?.pageCount ?: 0} página(s) digitalizada(s)"
-                    } else {
-                        "Primeiro envie as evidências ao sistema do banco. Quando a OS for liberada, volte aqui e digitalize a RAT."
-                    },
-                    color = AgilMuted,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Button(
-                    onClick = { startScan(DocumentType.RAT) },
-                    enabled = evidenceReady,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = AgilBlue,
-                        contentColor = AgilDark
-                    )
-                ) {
-                    Text(if (ratReady) "Refazer RAT" else "Digitalizar RAT")
-                }
-                if (!evidenceReady) {
-                    Text(
-                        text = "A RAT será liberada no app depois que as evidências obrigatórias estiverem prontas.",
-                        color = AgilMuted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-        }
-
         Text(
             text = "Documentação: $count de $total concluída",
             color = AgilDark,
@@ -2017,21 +2041,7 @@ private fun ScannerScreen(
             ),
             shape = RoundedCornerShape(14.dp)
         ) {
-            Text("1. GERAR EVIDÊNCIAS E ENVIAR PARA LIBERAR A OS")
-        }
-
-        Button(
-            onClick = { buildAndShareFinalPdf() },
-            enabled = finalReady,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = AgilBlue,
-                contentColor = AgilDark,
-                disabledContainerColor = Color(0xFFD7DBE1)
-            ),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Text("2. FINALIZAR COM A RAT E ENVIAR PDF ÚNICO")
+            Text("GERAR PDF E ENVIAR PELO WHATSAPP")
         }
 
         cloudStatus?.let { status ->
@@ -2057,15 +2067,15 @@ private fun ScannerScreen(
                 }
             }
             Text(
-                text = "Para gerar as evidências, falta: " + pendencias.joinToString(", ") + ".",
+                text = "Para liberar o envio, falta: " + pendencias.joinToString(", ") + ".",
                 color = AgilMuted,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
-        } else if (!ratReady) {
+        } else if (machineType == MachineType.NOVA) {
             Text(
-                text = "Evidências prontas. Envie para o sistema do banco e, após a liberação da OS, digitalize a RAT para gerar o PDF final.",
+                text = "Depois de enviar as evidências ao banco e liberar a OS, use a aba RAT e informe o mesmo chamado.",
                 color = AgilMuted,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
@@ -2234,6 +2244,46 @@ fun shareSinglePdf(
         } catch (_: Exception) {
             context.startActivity(
                 Intent.createChooser(buildIntent(null), "Enviar PDF")
+            )
+        }
+    }
+}
+
+fun shareMultiplePdfs(
+    context: Context,
+    files: List<File>,
+    message: String
+) {
+    if (files.isEmpty()) return
+
+    val uris = ArrayList<Uri>()
+    files.forEach { file ->
+        uris.add(
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+        )
+    }
+
+    fun buildIntent(packageName: String?): Intent =
+        Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "application/pdf"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            putExtra(Intent.EXTRA_TEXT, message)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (packageName != null) setPackage(packageName)
+        }
+
+    try {
+        context.startActivity(buildIntent("com.whatsapp"))
+    } catch (_: Exception) {
+        try {
+            context.startActivity(buildIntent("com.whatsapp.w4b"))
+        } catch (_: Exception) {
+            context.startActivity(
+                Intent.createChooser(buildIntent(null), "Enviar PDFs")
             )
         }
     }
