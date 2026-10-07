@@ -34,6 +34,7 @@ button{cursor:pointer}.primary{background:#101722;color:#fff}.muted{color:#68738
   <div id="panel" style="display:none">
     <div class="card row">
       <button id="refreshBtn" class="primary" type="button">Atualizar lista</button>
+      <button id="recoverBtn" type="button">Recuperar cadastros</button>
       <button id="logoutBtn" type="button">Sair</button>
       <span id="count" class="muted"></span>
     </div>
@@ -50,6 +51,7 @@ button{cursor:pointer}.primary{background:#101722;color:#fff}.muted{color:#68738
   var keyInput = document.getElementById('key');
   var loginBtn = document.getElementById('loginBtn');
   var refreshBtn = document.getElementById('refreshBtn');
+  var recoverBtn = document.getElementById('recoverBtn');
   var logoutBtn = document.getElementById('logoutBtn');
   var list = document.getElementById('list');
   var count = document.getElementById('count');
@@ -154,6 +156,28 @@ button{cursor:pointer}.primary{background:#101722;color:#fff}.muted{color:#68738
     }
   }
 
+
+  async function recoverDevices(){
+    recoverBtn.disabled = true;
+    recoverBtn.textContent = 'Recuperando...';
+    try{
+      var r = await request('/api/admin-recover-devices', {method:'POST', body:'{}'});
+      var j = {};
+      try { j = await r.json(); } catch(e) {}
+      if(!r.ok){
+        alert(j.error || 'Não foi possível recuperar os cadastros.');
+        return;
+      }
+      alert('Recuperação concluída. Cadastros encontrados: ' + (j.devices ? j.devices.length : 0));
+      await loadDevices();
+    }catch(e){
+      alert('Erro de conexão durante a recuperação.');
+    }finally{
+      recoverBtn.disabled = false;
+      recoverBtn.textContent = 'Recuperar cadastros';
+    }
+  }
+
   async function changeStatus(deviceId, action){
     var expiresAt = null;
     if(action === 'approve'){
@@ -180,6 +204,7 @@ button{cursor:pointer}.primary{background:#101722;color:#fff}.muted{color:#68738
     if(e.key === 'Enter'){ e.preventDefault(); doLogin(); }
   });
   refreshBtn.addEventListener('click', loadDevices);
+  recoverBtn.addEventListener('click', recoverDevices);
   logoutBtn.addEventListener('click', function(){
     sessionStorage.removeItem('agilAdminKey');
     location.reload();
