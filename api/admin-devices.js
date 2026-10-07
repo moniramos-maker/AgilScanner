@@ -1,4 +1,4 @@
-import { loadRegistry, saveRegistry, cleanText, isExpired } from "../lib/access-store.js";
+import { loadRegistry, updateRegistry, cleanText, isExpired } from "../lib/access-store.js";
 
 function authorized(req) {
   const expected = process.env.ADMIN_KEY || "";
@@ -20,18 +20,29 @@ export default async function handler(req, res) {
       const deviceId = cleanText(req.body?.deviceId, 128);
       const action = cleanText(req.body?.action, 20);
       const expiresAt = cleanText(req.body?.expiresAt, 40) || null;
-      const d = registry.devices.find(x => x.deviceId === deviceId);
-      if (!d) return res.status(404).json({ ok: false, error: "Dispositivo não encontrado." });
-      if (action === "approve") {
-        d.status = "approved";
-        d.approvedAt = new Date().toISOString();
-        d.expiresAt = expiresAt;
-      } else if (action === "block") d.status = "blocked";
-      else if (action === "reject") d.status = "rejected";
-      else if (action === "pending") d.status = "pending";
-      else return res.status(400).json({ ok: false, error: "Ação inválida." });
-      await saveRegistry(registry);
-      return res.status(200).json({ ok: true, device: d });
+      let updatedDevice = null;
+      await updateRegistry(current => {
+        const d = current.devices.find(x => x.deviceId === deviceId);
+        if (!d) return current;
+
+        if (action === "approve") {
+          d.status = "approved";
+          d.approvedAt = new Date().toISOString();
+          d.expiresAt = expiresAt;
+        } else if (action === "block") d.status = "blocked";
+        else if (action === "reject") d.status = "rejected";
+        else if (action === "pending") d.status = "pending";
+        else throw new Error("Ação inválida.");
+
+        updatedDevice = { ...d };
+        return current;
+      });
+
+      if (!updatedDevice) {
+        return res.status(404).json({ ok: false, error: "Dispositivo não encontrado." });
+      }
+
+      return res.status(200).json({ ok: true, device: updatedDevice });
     }
     return res.status(405).json({ ok: false, error: "Método não permitido." });
   } catch (e) {
