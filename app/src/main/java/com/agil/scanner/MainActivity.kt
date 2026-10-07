@@ -125,6 +125,7 @@ private enum class MachineType(
 }
 
 private enum class DocumentType(val label: String, val suffix: String) {
+    RAT("RAT de Atendimento", "RAT"),
     CONFIGURACAO("Relatório de Configuração", "CONFIGURACAO"),
     ATIVO("Relatório de Ativo", "ATIVO"),
     REDE("Relatório de Rede", "REDE"),
@@ -136,12 +137,14 @@ private fun DocumentType.labelFor(machineType: MachineType): String = label
 private fun documentsFor(machineType: MachineType): List<DocumentType> =
     if (machineType == MachineType.NOVA) {
         listOf(
+            DocumentType.RAT,
             DocumentType.ATIVO,
             DocumentType.REDE,
             DocumentType.ESTATISTICA
         )
     } else {
         listOf(
+            DocumentType.RAT,
             DocumentType.CONFIGURACAO,
             DocumentType.ATIVO,
             DocumentType.ESTATISTICA
@@ -1724,16 +1727,6 @@ private fun ScannerScreen(
             val outputDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
                 ?: context.filesDir
 
-            val ratFile = File(outputDir, "${safeFilePart(chamado)}_RAT.pdf")
-            if (!ratFile.exists()) {
-                Toast.makeText(
-                    context,
-                    "Digitalize primeiro a RAT deste chamado. Ela é obrigatória no arquivo único.",
-                    Toast.LENGTH_LONG
-                ).show()
-                return
-            }
-
             val safeCall = safeFilePart(chamado)
             val safeSerial = safeFilePart(serial.uppercase())
             val finalPdf = File(
@@ -1742,7 +1735,6 @@ private fun ScannerScreen(
             )
 
             val merger = PDFMergerUtility()
-            merger.addSource(ratFile)
             requiredDocuments.forEach { document ->
                 merger.addSource(requireNotNull(savedFiles[document]).file)
             }
@@ -1775,9 +1767,7 @@ private fun ScannerScreen(
 
     val count = requiredDocuments.count { savedFiles.containsKey(it) }
     val total = requiredDocuments.size
-    val outputDirForRat = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.filesDir
-    val ratReady = File(outputDirForRat, "${safeFilePart(chamado)}_RAT.pdf").exists()
-    val ready = count == total && serial.isNotBlank() && prefixo.isNotBlank() && agencia.isNotBlank() && ratReady
+    val ready = count == total && serial.isNotBlank() && prefixo.isNotBlank() && agencia.isNotBlank()
 
     Column(
         modifier = Modifier
@@ -1928,8 +1918,12 @@ private fun ScannerScreen(
                 if (prefixo.isBlank()) add("prefixo")
                 if (agencia.isBlank()) add("cidade")
                 if (serial.isBlank()) add("serial")
-                if (!ratReady) add("RAT do chamado")
-                if (count < total) add("documentos obrigatórios")
+                if (count < total) {
+                    val faltando = requiredDocuments
+                        .filter { !savedFiles.containsKey(it) }
+                        .joinToString(", ") { it.labelFor(machineType) }
+                    add(faltando.ifBlank { "documentos obrigatórios" })
+                }
             }
             Text(
                 text = "Para liberar o envio, falta: " + pendencias.joinToString(", ") + ".",
