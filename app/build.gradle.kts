@@ -12,8 +12,8 @@ android {
         applicationId = "com.agil.scanner"
         minSdk = 23
         targetSdk = 35
-        versionCode = 21
-        versionName = "21.0"
+        versionCode = 22
+        versionName = "22.0"
     }
 
     signingConfigs {
