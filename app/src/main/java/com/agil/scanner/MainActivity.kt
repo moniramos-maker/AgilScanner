@@ -1706,7 +1706,7 @@ private fun ScannerScreen(
 
     fun buildAndShareFinalPdf() {
         if (prefixo.isBlank() || agencia.isBlank()) {
-            Toast.makeText(context, "Informe o prefixo e o nome da agência como estão no cronograma.", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Informe o prefixo e o cidade como estão no cronograma.", Toast.LENGTH_LONG).show()
             return
         }
 
@@ -1850,9 +1850,9 @@ private fun ScannerScreen(
             value = agencia,
             onValueChange = { agencia = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Nome da agência") },
+            label = { Text("Cidade") },
             placeholder = { Text("Exatamente como está no cronograma") },
-            supportingText = { Text("A pasta será criada como: PREFIXO - NOME DA AGÊNCIA") },
+            supportingText = { Text("A pasta será criada como: PREFIXO - CIDADE") },
             singleLine = true
         )
 
@@ -1926,7 +1926,7 @@ private fun ScannerScreen(
         if (!ready) {
             val pendencias = buildList {
                 if (prefixo.isBlank()) add("prefixo")
-                if (agencia.isBlank()) add("nome da agência")
+                if (agencia.isBlank()) add("cidade")
                 if (serial.isBlank()) add("serial")
                 if (!ratReady) add("RAT do chamado")
                 if (count < total) add("documentos obrigatórios")
